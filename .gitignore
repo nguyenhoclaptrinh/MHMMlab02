@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+cover.html
+
+# Project specific
+server.db
+*.pem
+*.log
+downloaded_*.txt
+*.db-journal
+
+# IDE
+.vscode/
+.idea/
