@@ -49,17 +49,49 @@ Server đóng vai trò là "Kho chứa mù" (Blind Storage) và quản lý đị
 
 ```mermaid
 graph TD
-    Client["Client App (Cmd/Client)"] -->|HTTPS/JSON| Server["API Server (Cmd/Server)"]
-    Server -->|Storage| DB["(SQLite Database)"]
-    
-    subgraph Shared Logic (Pkg)
-        Models["pkg/models: Structs & Types"]
-        Crypto["pkg/crypto: AES & ECDH Utils"]
+    %% Styling
+    classDef client fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    classDef server fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef storage fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+    classDef crypto fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+
+    subgraph Client_Side ["Client Device (Trusted Zone)"]
+        direction TB
+        CLI["CLI / Menu UI"]:::client
+        ClientAPI["Client API Layer"]:::client
+        
+        subgraph Client_Security ["Client Security"]
+            ClientCrypto["Client Crypto Lib\n(AES-GCM, ECDH)"]:::crypto
+            KeyStore["Local Key Store\n(.pem files)"]:::storage
+        end
     end
 
-    Client -.->|Uses| Models
-    Client -.->|Uses| Crypto
-    Server -.->|Uses| Models
+    subgraph Server_Side ["Cloud Server (Untrusted Zone)"]
+        direction TB
+        Handlers["Request Handlers"]:::server
+        Auth["Auth Middleware\n(JWT Check)"]:::server
+        
+        subgraph Server_Security ["Server Security"]
+            ServerCrypto["Server Crypto Lib\n(Pass Hash, JWT Sign)"]:::crypto
+        end
+        
+        DBLogic["Storage Logic"]:::server
+    end
+
+    DB[("SQLite Database\nWAL Enabled")]:::storage
+
+    %% Connections
+    CLI --> ClientAPI
+    CLI <--> ClientCrypto
+    ClientCrypto <--> KeyStore
+    
+    ClientAPI <==>|HTTPS / JSON| Handlers
+    
+    Handlers --> Auth
+    Handlers --> DBLogic
+    Auth -.-> ServerCrypto
+    
+    DBLogic <--> DB
 ```
 
 ### Sơ đồ luồng hoạt động (Activity Flow)
@@ -72,31 +104,31 @@ sequenceDiagram
     participant S as Server
     participant B as User B (Receiver)
 
-    Note over A, S: 1. Setup
+    Note over A, S: 1. Setup (Register)
+    A->>A: pkg/client/crypto: Gen ECDH Keys
     A->>S: Register (Gửi Public Key A)
+    B->>B: pkg/client/crypto: Gen ECDH Keys
     B->>S: Register (Gửi Public Key B)
 
     Note over A, S: 2. Upload & Encrypt
-    A->>A: pkg/crypto: Sinh Random Key (K)
-    A->>A: pkg/crypto: Encrypt File (K)
-    A->>S: Upload Encrypted File
-    A->>A: Encrypt K (với Key của A)
-    A->>S: Lưu Encrypted Key (cho A)
+    A->>A: pkg/client/crypto: Sinh Random Key (K)
+    A->>A: pkg/client/crypto: Encrypt File (với K)
+    A->>A: pkg/client/crypto: Encrypt K (cho A)
+    A->>S: Upload Encrypted Bundle (File + KeyA)
 
     Note over A, B: 3. Sharing
     A->>S: Xin Public Key của B
     S-->>A: Trả Public Key B
-    A->>A: pkg/crypto: Derive Shared Secret (PrivA + PubB)
-    A->>A: pkg/crypto: Encrypt K (với Shared Secret)
+    A->>A: pkg/client/crypto: Derive Shared Secret (PrivA + PubB)
+    A->>A: pkg/client/crypto: Encrypt K (với Shared Secret)
     A->>S: Gửi Encrypted Key (cho B)
 
     Note over B, S: 4. Receiving
-    B->>S: Tải Encrypted File & Key
-    B->>B: pkg/crypto: Derive Shared Secret (PrivB + PubA)
-    B->>B: Decrypt lấy K
-    B->>B: Decrypt File (với K)
+    B->>S: Tải Encrypted Bundle (File + KeyB)
+    B->>B: pkg/client/crypto: Derive Shared Secret (PrivB + PubA)
+    B->>B: pkg/client/crypto: Decrypt lấy K
+    B->>B: pkg/client/crypto: Decrypt File (với K)
 ```
-
 ## 🛠️ Công Nghệ Sử Dụng
 
 *   **Ngôn ngữ**: Go (Golang) 1.22+
@@ -106,6 +138,11 @@ sequenceDiagram
     *   `crypto/ecdh`: Trao đổi khóa.
     *   `crypto/sha256`: Hashing & KDF.
     *   `crypto/rand`: CSPRNG.
+    
+### ⚡ Hiệu Năng & Tối Ưu (Performance)
+*   **Hibernate WAL Mode**: Sử dụng chế độ **Write-Ahead Logging** cho SQLite để tăng tốc độ ghi và hỗ trợ concurrency tốt hơn.
+*   **Connection Pooling**: Cấu hình `busy_timeout` và `synchronous=NORMAL` để tối ưu hóa pool kết nối.
+*   **Indexing**: Đánh chỉ mục (Indexing) cho các trường truy vấn thường xuyên như `owner_id` và `share_token` để giảm thời gian tìm kiếm.
 
 ## 📦 Cài Đặt & Chạy Ứng Dụng
 
@@ -166,10 +203,16 @@ lab02/
 │   └── server/
 │       └── main.go     # Mã nguồn chính của Server (API)
 ├── pkg/                # Các thư viện dùng chung (Library Code)
-│   ├── crypto/
-│   │   └── crypto_utils.go # Các hàm tiện ích mã hóa (AES, ECDH, Hash)
+│   ├── client/
+│   │   ├── api/        # Client API Implementation
+│   │   ├── crypto/     # Client-side Crypto (AES, ECDH)
+│   │   └── ui/         # User Interface (CLI)
+│   ├── server/
+│   │   ├── crypto/     # Server-side Crypto (JWT, Hash)
+│   │   ├── handlers/   # API Handlers
+│   │   └── storage/    # Database Logic
 │   └── models/
-│       └── models.go       # Các cấu trúc dữ liệu chung (User, Note, Request/Response)
+│       └── models.go   # Data Structures (User, Note)
 ├── database/           # Chứa file SQLite (được tạo khi chạy)
 ├── go.mod              # Go module definition
 ├── requirements.md     # Yêu cầu bài tập

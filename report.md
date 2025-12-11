@@ -23,7 +23,23 @@ Xây dựng một nền tảng chia sẻ ghi chú an toàn, đảm bảo tính r
 ## 2. Thiết kế và Kiến trúc
 
 ### 2.1 Kiến trúc hệ thống
-Hệ thống tuân theo mô hình **Client-Server** truyền thống nhưng với thiết kế "Zero-Knowledge" về mặt dữ liệu nội dung từ phía Server.
+Hệ thống tuân theo mô hình **Client-Server** với thiết kế **Zero-Knowledge** và **Modular Refactoring**.
+
+**Các thành phần chính (Main Components)**:
+
+1.  **Client Application (Ứng dụng nười dùng)**:
+    *   **Giao diện (UI)**: Cung cấp menu dòng lệnh (CLI) để người dùng tương tác (Đăng ký, Đăng nhập, Gửi/Nhận file).
+    *   **Client API Layer**: Module chịu trách nhiệm đóng gói dữ liệu và gửi các HTTP Request tới Server.
+    *   **Client Crypto Module**: Thành phần quan trọng nhất, thực hiện mã hóa AES-256 nội dung file và trao đổi khóa ECDH. Đảm bảo dữ liệu rời khỏi máy người dùng luôn ở dạng mã hóa.
+
+2.  **Server Application (Máy chủ)**:
+    *   **Request Handlers**: Tiếp nhận các yêu cầu từ Client, kiểm tra tính hợp lệ của dữ liệu đầu vào.
+    *   **Authentication Middleware**: Xác thực người dùng thông qua JWT Token trước khi cho phép truy cập tài nguyên.
+    *   **Server Crypto Module**: Chỉ thực hiện các tác vụ của Server như băm mật khẩu (Hashing) và ký Token. Không dính dáng đến khóa giải mã file.
+    *   **Storage Layer**: Tương tác trực tiếp với cơ sở dữ liệu SQLite, thực hiện các truy vấn tối ưu hóa (WAL Mode).
+
+3.  **Database (Cơ sở dữ liệu)**:
+    *   **SQLite**: Lưu trữ bền vững thông tin người dùng, metadata của ghi chú và các khối dữ liệu (BLOB) đã mã hóa.
 
 **Sơ đồ luồng hoạt động**:
 1.  **Client**: Chịu trách nhiệm tạo khóa, mã hóa dữ liệu, gửi dữ liệu đã mã hóa lên Crypto Layer.
@@ -56,7 +72,7 @@ Hệ thống tuân theo mô hình **Client-Server** truyền thống nhưng vớ
 2.  **Upload & Mã hóa (Create Note)**:
     - Tạo khóa ngẫu nhiên `K_File` (32 bytes).
     - Mã hóa File: $Content_{Enc} = AES\_GCM(File, K_{File})$.
-    - Để chính mình đọc lại được, Client A lấy `PubKey_A` (của chính mình), kết hợp `PrivKey_A` $\rightarrow$ `SharedSecret` (thực ra là ECDH với chính mình hoặc derived key).
+    - Để chính mình đọc lại được, Client A lấy `PubKey_A`, kết hợp `PrivKey_A` $\rightarrow$ `SharedSecret`.
     - Mã hóa khóa file: $K_{Enc} = AES\_GCM(K_{File}, Hash(SharedSecret))$.
     - Gửi $\{Content_{Enc}, K_{Enc}\}$ lên Server.
 
@@ -68,8 +84,10 @@ Hệ thống tuân theo mô hình **Client-Server** truyền thống nhưng vớ
     - Gửi `K_{EncB}` lên Server cho B.
 
 ### 3.2 Tối ưu hóa (Optimization)
-- **SQLite (Pure Go)**: Sử dụng driver không cần CGO (`modernc.org/sqlite`) giúp việc biên dịch và chạy trên Windows dễ dàng hơn, không cần cài GCC.
-- **JWT Caching**: Server xác thực Stateless, không cần query DB để check session ID mỗi lần req (tuy nhiên vẫn check user existence).
+- **SQLite (Pure Go)**: Sử dụng driver không cần CGO (`modernc.org/sqlite`) giúp việc biên dịch và chạy trên Windows dễ dàng hơn.
+- **Write-Ahead Logging (WAL)**: Cấu hình `PRAGMA journal_mode=WAL;` giúp tăng hiệu năng xử lý đồng thời, cho phép đọc/ghi song song.
+- **Connection Pooling**: Sử dụng DSN parameters (`busy_timeout=5000`) để quản lý timeout kết nối hiệu quả, tránh lỗi "database locked" khi tải cao.
+- **Indexing**: Đánh chỉ mục cho các trường `owner_id` và `share_token` để tăng tốc độ truy vấn.
 
 ---
 
@@ -77,15 +95,18 @@ Hệ thống tuân theo mô hình **Client-Server** truyền thống nhưng vớ
 
 ### 4.1 Chuyển đổi từ RSA sang ECDH
 - **Vấn đề**: RSA mã hóa trực tiếp được khóa nhỏ, nhưng ECDH chỉ tạo ra Shared Secret chứ không mã hóa trực tiếp.
-- **Giải pháp**: Sử dụng cơ chế **Key Wrapping**. Dùng ECDH để tạo Shared Secret, sau đó Hash(SharedSecret) để làm khóa AES dùng để mã hóa cái "File Key". Đây là mô hình Hybrid Encryption chuẩn.
+- **Giải pháp**: Sử dụng cơ chế **Key Wrapping**. Dùng ECDH để tạo Shared Secret, sau đó Hash(SharedSecret) để làm khóa AES dùng để mã hóa cái "File Key".
 
 ### 4.2 Bảo mật Mật khẩu
 - **Vấn đề**: SHA-256 thuần túy dễ bị tấn công bởi Rainbow Table.
 - **Giải pháp**: Triển khai **Salt**. Mỗi user có một chuỗi Salt ngẫu nhiên 16-byte lưu trong DB. Khi hash, chuỗi này được nối vào password.
 
 ### 4.3 Đồng bộ hóa (Concurrency)
-- **Vấn đề**: Ghi đồng thời vào map (phiên bản cũ) gây panic.
-- **Giải pháp**: Chuyển sang SQLite với transaction (`db.Begin()`, `tx.Commit()`) đảm bảo tính toàn vẹn dữ liệu (ACID) và thread-safety.
+- **Vấn đề**: SQLite mặc định lock toàn bộ database khi ghi, gây lỗi khi stress test nhiều user.
+- **Giải pháp**: 
+    1. Chuyển sang **WAL Mode** (Write-Ahead Logging).
+    2. Cấu hình **Busy Timeout** để driver tự động chờ (backoff) thay vì fail ngay.
+    3. Kết quả là hệ thống chịu tải tốt (50/50 requests thành công trong bài test stress).
 
 ---
 
@@ -96,7 +117,7 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 
 #### Automated Testing
 - **Framework**: Go testing package (`testing`)
-- **Coverage**: 5 test suites, 24 test functions, 40 test cases
+- **Coverage**: 5 test suites, >40 test cases
 - **Test Types**:
   - Unit Tests: Mã hóa AES, ECDH key exchange
   - Integration Tests: API endpoints, database operations
@@ -111,72 +132,26 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 ### 5.2 Kết quả Kiểm thử
 
 #### Automated Test Results
-**Tổng quan**: ✅ **40/40 tests PASS** (100% success rate)
+**Tổng quan**: ✅ **PASS 100%**
 
-**Chi tiết theo module**:
-
-1. **Authentication Tests** (`auth_test.go`) - 9/9 PASS ✅
-   - ✅ Đăng ký thành công với ECDH key pair
-   - ✅ Đăng ký trùng username → 409 Conflict
-   - ✅ Validate mật khẩu yếu (5 sub-tests: độ dài, chữ hoa/thường, số, ký tự đặc biệt)
-   - ✅ Invalid JSON → 400 Bad Request
-   - ✅ Đăng nhập thành công → JWT token
-   - ✅ Đăng nhập sai credentials → 401 Unauthorized
-   - ✅ Password được hash (SHA-256 + Salt) trong DB
-   - ✅ Invalid/Empty token → 401 Unauthorized
-   - ✅ Concurrent registration (thread-safe)
-
-2. **Encryption Tests** (`encryption_test.go`) - 3/3 PASS ✅
-   - ✅ AES-GCM encryption/decryption integrity
-   - ✅ Validate AES key size (256-bit)
-   - ✅ IV uniqueness (mỗi lần encrypt khác nhau)
-
-3. **E2E Encryption Tests** (`e2e_encryption_test.go`) - 4/4 PASS ✅
-   - ✅ End-to-end note encryption workflow
-   - ✅ Shared note có encrypted keys riêng cho mỗi user
-   - ✅ Multiple users share & decrypt cùng 1 note
-   - ✅ Key rotation (re-encrypt với key mới)
-
-4. **Access Control Tests** (`access_control_test.go`) - 5/5 PASS ✅
-   - ✅ User A share note cho User B → B decrypt thành công
-   - ✅ Generate share link với token
-   - ✅ Access public note qua share link (không cần login)
-   - ✅ Expired share link → 403 Forbidden
-   - ✅ Unauthorized user access → 403 Forbidden
-
-5. **Integration Tests** (`integration_test.go`) - 3/3 PASS ✅
-   - ✅ Full workflow: Register → Login → Upload → Share → Download
-   - ✅ Concurrent note creation (20 notes đồng thời, race condition test)
-   - ✅ Stress test (10 users × 5 notes = 50 operations, concurrency + retry logic)
+**Chi tiết**:
+1. **Authentication**: Đăng ký, Đăng nhập, JWT, Hash Password ✅
+2. **Encryption**: AES-GCM integrity, Key Size validation ✅
+3. **E2E Encryption**: Mã hóa đầu cuối, Key Rotation ✅
+4. **Access Control**: Phân quyền, Share Link, Expired Link ✅
+5. **Integration & Stress**: 
+    - Full Workflow ✅
+    - **Stress Test**: 10 User tạo 50 note cùng lúc ✅ (Đã khắc phục lỗi lock DB nhờ tối ưu hóa WAL).
 
 #### Manual Test Results
-
-**Đăng ký/Đăng nhập**:
-- ✅ Thành công tạo User mới, file `.pem` được lưu
-- ✅ Đăng nhập sai pass/username trả về lỗi 401
-- ✅ Đăng nhập đúng trả về JWT Token
-
-**Mã hóa/Giải mã**:
-- ✅ Upload file text/binary, tải về giải mã trùng khớp SHA-256 với file gốc
-- ✅ Không có Private Key (`.pem`) không thể giải mã
-
-**Chia sẻ (ECDH)**:
-- ✅ User A chia sẻ cho User B. User B đăng nhập, tải file và giải mã thành công
-- ✅ User C (không được share) truy cập bị lỗi 403
-
-**Chia sẻ Link**:
-- ✅ Tạo link, mở trên client khác (chọn menu 3) tải thành công mà không cần login
+- **Đăng ký/Đăng nhập**: Thành công, tạo file `.pem` local.
+- **Mã hóa**: File tải về giải mã trùng khớp hash gốc.
+- **Chia sẻ**: User được share giải mã thành công, User khác không truy cập được.
 
 #### Lệnh chạy test
 ```bash
 # Chạy tất cả tests
 go test ./test/... -v
-
-# Chạy test với coverage
-go test ./test/... -cover
-
-# Chạy test cụ thể
-go test ./test/... -run TestEndToEndNoteEncryption -v
 ```
 
 ---
