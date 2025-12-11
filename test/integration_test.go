@@ -185,7 +185,7 @@ func TestStressMultipleUsers(t *testing.T) {
 
 	numUsers := 10
 	notesPerUser := 5
-	
+
 	// Tạo users tuần tự để tránh SQLite database lock
 	users := make([]string, numUsers)
 	for i := 0; i < numUsers; i++ {
@@ -221,22 +221,28 @@ func TestStressMultipleUsers(t *testing.T) {
 					successCount++
 					mu.Unlock()
 					resp.Body.Close()
-				} else if resp != nil {
-					resp.Body.Close()
+				} else {
+					if err != nil {
+						t.Logf("Request failed: %v", err)
+					} else {
+						body, _ := io.ReadAll(resp.Body)
+						t.Logf("Request failed with status %d: %s", resp.StatusCode, string(body))
+						resp.Body.Close()
+					}
 				}
 			}
 		}(i, users[i])
 	}
 
 	wg.Wait()
-	
+
 	expectedNotes := numUsers * notesPerUser
 	if successCount < expectedNotes {
 		t.Logf("Stress Test: Created %d/%d notes successfully", successCount, expectedNotes)
 	} else {
 		t.Logf("Stress Test: %d users created %d notes each (%d total)", numUsers, notesPerUser, successCount)
 	}
-	
+
 	// Pass test nếu ít nhất 90% notes được tạo thành công
 	if successCount < int(float64(expectedNotes)*0.9) {
 		t.Errorf("Only %d/%d notes created (expected at least 90%%)", successCount, expectedNotes)

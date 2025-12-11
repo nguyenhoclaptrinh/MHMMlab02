@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -24,17 +25,15 @@ var testDB *sql.DB
 // setupTestServer tạo real HTTP test server với router thật
 func setupTestServer() *httptest.Server {
 	var err error
-	// Sử dụng in-memory SQLite database với WAL mode cho concurrency
-	testDB, err = sql.Open("sqlite", ":memory:?cache=shared")
+	// Use file-based DB for better WAL/concurrency support in tests
+	dbFile := "test.db"
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(30000)", dbFile)
+	testDB, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Fatal("Failed to create test database:", err)
 	}
 
-	// Enable WAL mode và optimize cho concurrent access
-	testDB.Exec("PRAGMA journal_mode=WAL")
-	testDB.Exec("PRAGMA synchronous=NORMAL")
-	testDB.Exec("PRAGMA busy_timeout=5000")
-	testDB.SetMaxOpenConns(1) // SQLite in-memory DB works best with single connection
+	testDB.SetMaxOpenConns(10) // WAL allows concurrent readers
 
 	// Tạo bảng Users
 	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS users (
@@ -63,6 +62,14 @@ func setupTestServer() *httptest.Server {
 		log.Fatal("Failed to create notes table:", err)
 	}
 
+	// Index cho notes
+	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id);`); err != nil {
+		log.Fatal("Failed to create index idx_notes_owner:", err)
+	}
+	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_share_token ON notes(share_token);`); err != nil {
+		log.Fatal("Failed to create index idx_notes_share_token:", err)
+	}
+
 	// Tạo bảng SharedKeys
 	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS shared_keys (
 		note_id TEXT,
@@ -72,6 +79,11 @@ func setupTestServer() *httptest.Server {
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create shared_keys table:", err)
+	}
+
+	// Index cho shared_keys
+	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_shared_keys_user ON shared_keys(user_id);`); err != nil {
+		log.Fatal("Failed to create index idx_shared_keys_user:", err)
 	}
 
 	// Tạo HTTP routes
@@ -92,15 +104,10 @@ func setupTestServer() *httptest.Server {
 // cleanupTestData xóa toàn bộ dữ liệu test
 func cleanupTestData(t *testing.T) {
 	if testDB != nil {
-		if _, err := testDB.Exec("DELETE FROM shared_keys"); err != nil {
-			t.Logf("Warning: Failed to delete shared_keys: %v", err)
-		}
-		if _, err := testDB.Exec("DELETE FROM notes"); err != nil {
-			t.Logf("Warning: Failed to delete notes: %v", err)
-		}
-		if _, err := testDB.Exec("DELETE FROM users"); err != nil {
-			t.Logf("Warning: Failed to delete users: %v", err)
-		}
+		testDB.Close()
+		os.Remove("test.db")
+		os.Remove("test.db-shm")
+		os.Remove("test.db-wal")
 	}
 }
 
@@ -357,8 +364,10 @@ func createNoteTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-generate note ID và auto-fill owner
-	noteID := fmt.Sprintf("%d", time.Now().UnixNano())
+	// Generate random note ID to avoid collision in stress tests
+	idBytes := make([]byte, 16)
+	rand.Read(idBytes)
+	noteID := hex.EncodeToString(idBytes)
 	createdAt := time.Now()
 
 	// Insert note vào database (with defaults for optional fields)
@@ -367,6 +376,7 @@ func createNoteTest(w http.ResponseWriter, r *http.Request) {
 		noteID, user.Username, "", "", req.Content, false, createdAt)
 
 	if err != nil {
+		log.Printf("Error creating note: %v", err) // Log actual error
 		http.Error(w, `{"error":"Failed to create note"}`, http.StatusInternalServerError)
 		return
 	}
