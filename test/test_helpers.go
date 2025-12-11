@@ -24,11 +24,17 @@ var testDB *sql.DB
 // setupTestServer tạo real HTTP test server với router thật
 func setupTestServer() *httptest.Server {
 	var err error
-	// Sử dụng in-memory SQLite database
-	testDB, err = sql.Open("sqlite", ":memory:")
+	// Sử dụng in-memory SQLite database với WAL mode cho concurrency
+	testDB, err = sql.Open("sqlite", ":memory:?cache=shared")
 	if err != nil {
 		log.Fatal("Failed to create test database:", err)
 	}
+
+	// Enable WAL mode và optimize cho concurrent access
+	testDB.Exec("PRAGMA journal_mode=WAL")
+	testDB.Exec("PRAGMA synchronous=NORMAL")
+	testDB.Exec("PRAGMA busy_timeout=5000")
+	testDB.SetMaxOpenConns(1) // SQLite in-memory DB works best with single connection
 
 	// Tạo bảng Users
 	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS users (
@@ -140,6 +146,65 @@ func createTestUser(t *testing.T, server *httptest.Server, username, password st
 	return response["token"].(string)
 }
 
+// createTestUserWithRetry tạo user với retry logic để tránh SQLite lock
+func createTestUserWithRetry(t *testing.T, server *httptest.Server, username, password string) string {
+	maxRetries := 3
+	var lastErr error
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 50ms, 100ms, 200ms
+			time.Sleep(time.Duration(50*(1<<uint(attempt-1))) * time.Millisecond)
+		}
+		
+		// Register via real HTTP
+		regPayload := map[string]interface{}{
+			"username":   username,
+			"password":   password,
+			"public_key": []byte("test_public_key_" + username),
+		}
+		regBody, _ := json.Marshal(regPayload)
+
+		resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			continue
+		}
+
+		// Login to get token
+		loginPayload := map[string]interface{}{
+			"username": username,
+			"password": password,
+		}
+		loginBody, _ := json.Marshal(loginPayload)
+
+		loginResp, err := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer loginResp.Body.Close()
+
+		if loginResp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("login status %d", loginResp.StatusCode)
+			continue
+		}
+
+		var response map[string]interface{}
+		json.NewDecoder(loginResp.Body).Decode(&response)
+		return response["token"].(string)
+	}
+	
+	t.Fatalf("Failed to create user %s after %d attempts: %v", username, maxRetries, lastErr)
+	return ""
+}
+
 // Test handlers - Simplified versions of main.go handlers
 
 func handleRegisterTest(w http.ResponseWriter, r *http.Request) {
@@ -201,9 +266,22 @@ func handleRegisterTest(w http.ResponseWriter, r *http.Request) {
 	}
 	hashedPwd := crypto.HashPassword(req.Password, salt)
 
-	_, err = testDB.Exec("INSERT INTO users (username, password_hash, salt, public_key) VALUES (?, ?, ?, ?)",
+	// Use immediate transaction để tránh database lock
+	tx, err := testDB.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	
+	_, err = tx.Exec("INSERT INTO users (username, password_hash, salt, public_key) VALUES (?, ?, ?, ?)",
 		req.Username, hashedPwd, salt, req.PublicKey)
 	if err != nil {
+		tx.Rollback()
+		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	
+	if err := tx.Commit(); err != nil {
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}

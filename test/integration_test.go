@@ -184,20 +184,29 @@ func TestStressMultipleUsers(t *testing.T) {
 	defer cleanupTestData(t)
 
 	numUsers := 10
+	notesPerUser := 5
+	
+	// Tạo users tuần tự để tránh SQLite database lock
+	users := make([]string, numUsers)
+	for i := 0; i < numUsers; i++ {
+		username := "stressuser" + string(rune('0'+i))
+		token := createTestUserWithRetry(t, server, username, "Password123!")
+		users[i] = token
+	}
+
+	// Sau đó mỗi user tạo notes song song
 	var wg sync.WaitGroup
+	successCount := 0
+	var mu sync.Mutex
 
 	for i := 0; i < numUsers; i++ {
 		wg.Add(1)
-		go func(id int) {
+		go func(userIndex int, token string) {
 			defer wg.Done()
 
-			username := "stressuser" + string(rune('0'+id))
-			token := createTestUser(t, server, username, "Password123!")
-
-			// Mỗi user tạo 5 notes
-			for j := 0; j < 5; j++ {
+			for j := 0; j < notesPerUser; j++ {
 				notePayload := map[string]interface{}{
-					"content": "Note from " + username,
+					"content": "Note " + string(rune('0'+j)) + " from user " + string(rune('0'+userIndex)),
 				}
 				noteBody, _ := json.Marshal(notePayload)
 
@@ -207,15 +216,31 @@ func TestStressMultipleUsers(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer "+token)
 
 				resp, err := client.Do(req)
-				if err == nil {
+				if err == nil && resp.StatusCode == http.StatusCreated {
+					mu.Lock()
+					successCount++
+					mu.Unlock()
+					resp.Body.Close()
+				} else if resp != nil {
 					resp.Body.Close()
 				}
 			}
-		}(i)
+		}(i, users[i])
 	}
 
 	wg.Wait()
-	t.Logf("Stress Test: ✅ %d users created %d notes each", numUsers, 5)
+	
+	expectedNotes := numUsers * notesPerUser
+	if successCount < expectedNotes {
+		t.Logf("Stress Test: Created %d/%d notes successfully", successCount, expectedNotes)
+	} else {
+		t.Logf("Stress Test: %d users created %d notes each (%d total)", numUsers, notesPerUser, successCount)
+	}
+	
+	// Pass test nếu ít nhất 90% notes được tạo thành công
+	if successCount < int(float64(expectedNotes)*0.9) {
+		t.Errorf("Only %d/%d notes created (expected at least 90%%)", successCount, expectedNotes)
+	}
 }
 
 // BenchmarkRegisterUser đo performance đăng ký

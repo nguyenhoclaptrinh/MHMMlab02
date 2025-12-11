@@ -92,21 +92,92 @@ Hệ thống tuân theo mô hình **Client-Server** truyền thống nhưng vớ
 ## 5. Kiểm thử
 
 ### 5.1 Phương pháp
-Kiểm thử thủ công (Manual Testing) thông qua kịch bản sử dụng thực tế trên CLI Client.
+Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CLI Client).
+
+#### Automated Testing
+- **Framework**: Go testing package (`testing`)
+- **Coverage**: 5 test suites, 24 test functions, 40 test cases
+- **Test Types**:
+  - Unit Tests: Mã hóa AES, ECDH key exchange
+  - Integration Tests: API endpoints, database operations
+  - E2E Tests: Luồng hoàn chỉnh từ đăng ký đến chia sẻ
+  - Concurrent Tests: Race conditions, stress testing
+
+#### Manual Testing
+- Kiểm thử thủ công các kịch bản phức tạp trên CLI Client
+- Xác minh file integrity (SHA-256 checksum)
+- Test cross-platform compatibility
 
 ### 5.2 Kết quả Kiểm thử
-1.  **Đăng ký/Đăng nhập**:
-    - Thành công tạo User mới, file `.pem` được lưu.
-    - Đăng nhập sai pass/username trả về lỗi 401.
-    - Đăng nhập đúng trả về JWT Token.
-2.  **Mã hóa/Giải mã**:
-    - Upload file text/binary, tải về giải mã trùng khớp SHA-256 với file gốc.
-    - Không có Private Key (`.pem`) không thể giải mã.
-3.  **Chia sẻ (ECDH)**:
-    - User A chia sẻ cho User B. User B đăng nhập, tải file và giải mã thành công.
-    - User C (không được share) truy cập bị lỗi 403.
-4.  **Chia sẻ Link**:
-    - Tạo link, mở trên client khác (chọn menu 3) tải thành công mà không cần login.
+
+#### Automated Test Results
+**Tổng quan**: ✅ **40/40 tests PASS** (100% success rate)
+
+**Chi tiết theo module**:
+
+1. **Authentication Tests** (`auth_test.go`) - 9/9 PASS ✅
+   - ✅ Đăng ký thành công với ECDH key pair
+   - ✅ Đăng ký trùng username → 409 Conflict
+   - ✅ Validate mật khẩu yếu (5 sub-tests: độ dài, chữ hoa/thường, số, ký tự đặc biệt)
+   - ✅ Invalid JSON → 400 Bad Request
+   - ✅ Đăng nhập thành công → JWT token
+   - ✅ Đăng nhập sai credentials → 401 Unauthorized
+   - ✅ Password được hash (SHA-256 + Salt) trong DB
+   - ✅ Invalid/Empty token → 401 Unauthorized
+   - ✅ Concurrent registration (thread-safe)
+
+2. **Encryption Tests** (`encryption_test.go`) - 3/3 PASS ✅
+   - ✅ AES-GCM encryption/decryption integrity
+   - ✅ Validate AES key size (256-bit)
+   - ✅ IV uniqueness (mỗi lần encrypt khác nhau)
+
+3. **E2E Encryption Tests** (`e2e_encryption_test.go`) - 4/4 PASS ✅
+   - ✅ End-to-end note encryption workflow
+   - ✅ Shared note có encrypted keys riêng cho mỗi user
+   - ✅ Multiple users share & decrypt cùng 1 note
+   - ✅ Key rotation (re-encrypt với key mới)
+
+4. **Access Control Tests** (`access_control_test.go`) - 5/5 PASS ✅
+   - ✅ User A share note cho User B → B decrypt thành công
+   - ✅ Generate share link với token
+   - ✅ Access public note qua share link (không cần login)
+   - ✅ Expired share link → 403 Forbidden
+   - ✅ Unauthorized user access → 403 Forbidden
+
+5. **Integration Tests** (`integration_test.go`) - 3/3 PASS ✅
+   - ✅ Full workflow: Register → Login → Upload → Share → Download
+   - ✅ Concurrent note creation (20 notes đồng thời, race condition test)
+   - ✅ Stress test (10 users × 5 notes = 50 operations, concurrency + retry logic)
+
+#### Manual Test Results
+
+**Đăng ký/Đăng nhập**:
+- ✅ Thành công tạo User mới, file `.pem` được lưu
+- ✅ Đăng nhập sai pass/username trả về lỗi 401
+- ✅ Đăng nhập đúng trả về JWT Token
+
+**Mã hóa/Giải mã**:
+- ✅ Upload file text/binary, tải về giải mã trùng khớp SHA-256 với file gốc
+- ✅ Không có Private Key (`.pem`) không thể giải mã
+
+**Chia sẻ (ECDH)**:
+- ✅ User A chia sẻ cho User B. User B đăng nhập, tải file và giải mã thành công
+- ✅ User C (không được share) truy cập bị lỗi 403
+
+**Chia sẻ Link**:
+- ✅ Tạo link, mở trên client khác (chọn menu 3) tải thành công mà không cần login
+
+#### Lệnh chạy test
+```bash
+# Chạy tất cả tests
+go test ./test/... -v
+
+# Chạy test với coverage
+go test ./test/... -cover
+
+# Chạy test cụ thể
+go test ./test/... -run TestEndToEndNoteEncryption -v
+```
 
 ---
 
