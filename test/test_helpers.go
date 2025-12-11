@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"lab02/pkg/crypto"
 	"lab02/pkg/models"
+	"lab02/pkg/server/crypto"
 
 	_ "modernc.org/sqlite"
 )
@@ -150,13 +150,13 @@ func createTestUser(t *testing.T, server *httptest.Server, username, password st
 func createTestUserWithRetry(t *testing.T, server *httptest.Server, username, password string) string {
 	maxRetries := 3
 	var lastErr error
-	
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff: 50ms, 100ms, 200ms
 			time.Sleep(time.Duration(50*(1<<uint(attempt-1))) * time.Millisecond)
 		}
-		
+
 		// Register via real HTTP
 		regPayload := map[string]interface{}{
 			"username":   username,
@@ -200,7 +200,7 @@ func createTestUserWithRetry(t *testing.T, server *httptest.Server, username, pa
 		json.NewDecoder(loginResp.Body).Decode(&response)
 		return response["token"].(string)
 	}
-	
+
 	t.Fatalf("Failed to create user %s after %d attempts: %v", username, maxRetries, lastErr)
 	return ""
 }
@@ -272,7 +272,7 @@ func handleRegisterTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-	
+
 	_, err = tx.Exec("INSERT INTO users (username, password_hash, salt, public_key) VALUES (?, ?, ?, ?)",
 		req.Username, hashedPwd, salt, req.PublicKey)
 	if err != nil {
@@ -280,7 +280,7 @@ func handleRegisterTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-	
+
 	if err := tx.Commit(); err != nil {
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 		return
