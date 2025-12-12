@@ -12,7 +12,7 @@
 cover.html
 
 # Project specific
-server.db
+*.db
 *.pem
 *.log
 downloaded_*.txt
