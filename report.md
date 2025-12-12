@@ -117,12 +117,17 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 
 #### Automated Testing
 - **Framework**: Go testing package (`testing`)
-- **Coverage**: 5 test suites, >40 test cases
+- **Coverage**: **7 test suites, 48+ test cases**
+- **Test Architecture**:
+  - **Test Isolation**: Mỗi test sử dụng `TestContext` riêng biệt với database tạm và HTTP server độc lập
+  - **Auto Cleanup**: Sử dụng `t.TempDir()` để tự động dọn dẹp resources sau mỗi test
+  - **Error Handling**: Tất cả errors từ crypto operations và JSON marshaling đều được kiểm tra đầy đủ
 - **Test Types**:
-  - Unit Tests: Mã hóa AES, ECDH key exchange
-  - Integration Tests: API endpoints, database operations
-  - E2E Tests: Luồng hoàn chỉnh từ đăng ký đến chia sẻ
-  - Concurrent Tests: Race conditions, stress testing
+  - **Crypto Unit Tests** (MỚI): ECDH key exchange thực tế, AES encryption/decryption, negative test cases
+  - **Unit Tests**: Mã hóa AES-GCM, validation
+  - **Integration Tests**: API endpoints, database operations
+  - **E2E Tests**: Luồng hoàn chỉnh từ đăng ký đến chia sẻ
+  - **Concurrent Tests**: Race conditions, stress testing
 
 #### Manual Testing
 - Kiểm thử thủ công các kịch bản phức tạp trên CLI Client
@@ -132,17 +137,28 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 ### 5.2 Kết quả Kiểm thử
 
 #### Automated Test Results
-**Tổng quan**: ✅ **PASS 100%**
+**Tổng quan**: ✅ **PASS 100% (7/7 test suites)**
 
 **Chi tiết**:
-1. **Authentication**: Đăng ký, Đăng nhập, JWT, Hash Password ✅
-2. **Encryption**: AES-GCM integrity, Key Size validation ✅
-3. **E2E Encryption**: Mã hóa đầu cuối, Key Rotation ✅
-4. **Access Control**: Phân quyền, Share Link, Expired Link ✅
-5. **Integration & Stress**: 
+1. **Authentication** (8 tests): Đăng ký, Đăng nhập, JWT, Hash Password, Invalid credentials ✅
+2. **Encryption** (3 tests): AES-GCM integrity, Key Size validation ✅
+3. **Crypto Unit Tests** (8 tests - MỚI): 
+    - ECDH Key Exchange (real implementation) ✅
+    - ECDH Key Uniqueness ✅
+    - Invalid Public Key handling ✅
+    - AES Encrypt/Decrypt cycle ✅
+    - Decrypt with wrong key (negative test) ✅
+    - Encryption uniqueness (nonce randomness) ✅
+    - Invalid ciphertext handling ✅
+    - Key serialization/deserialization ✅
+4. **E2E Encryption** (4 tests): Mã hóa đầu cuối, Shared keys, Multi-user, Key Rotation ✅
+5. **Access Control** (8 tests): Phân quyền, Share Link, Expired Link, Revoke, List shared ✅
+6. **Integration & Stress** (6 tests): 
     - Full Workflow ✅
-    - **Stress Test**: 10 User tạo 50 note cùng lúc ✅ (Đã khắc phục lỗi lock DB nhờ tối ưu hóa WAL).
-    - **Share Link Scenarios**: Kiểm thử đúng hạn (Expiration) và lượt truy cập (Max Visits) ✅
+    - Concurrent Note Creation ✅
+    - **Stress Test**: Multiple users với concurrent operations ✅
+    - **Share Link Scenarios**: Expiration và Max Visits ✅
+7. **Multi-Share** (1 test): Time-based và visit-based link expiration ✅
 
 #### Manual Test Results
 - **Đăng ký/Đăng nhập**: Thành công, tạo file `.pem` local.
@@ -153,6 +169,9 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 ```bash
 # Chạy tất cả tests
 go test ./test/... -v
+
+# Hoặc dùng script tổng hợp
+./test/run_tests.sh
 ```
 
 ---
