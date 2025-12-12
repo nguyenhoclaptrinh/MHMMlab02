@@ -17,6 +17,8 @@ server.db
 *.log
 downloaded_*.txt
 *.db-journal
+*.db-shm
+*.db-wal
 
 # IDE
 .vscode/
