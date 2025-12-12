@@ -13,6 +13,7 @@ test/
 ├── encryption_test.go         # Test mã hóa/giải mã
 ├── access_control_test.go     # Test giới hạn truy cập
 ├── e2e_encryption_test.go     # Test mã hóa đầu-cuối
+├── multishare_test.go         # Test kịch bản chia sẻ link
 └── testdata/                  # Dữ liệu test (nếu cần)
 ```
 
@@ -81,6 +82,15 @@ Test tính năng chia sẻ ghi chú an toàn giữa người dùng:
 - ✅ `TestServerNeverSeesPlainKey` - Server không bao giờ thấy plaintext key
 - ✅ `TestMultipleUsersAccessSameNote` - Nhiều users truy cập cùng note
 
+### 5. Kịch bản Chia sẻ Link (multishare_test.go)
+
+Test kịch bản tổng hợp về giới hạn truy cập của liên kết chia sẻ:
+
+- ✅ `TestMultiShareLinks` - Kiểm thử kịch bản sử dụng link với các giới hạn:
+  - Giới hạn số lượt truy cập (Max Visits).
+  - Giới hạn thời gian (Expiration).
+  - Kiểm tra trạng thái link sau khi hết hạn.
+
 ## Cách chạy Test
 
 ### Yêu cầu
@@ -134,6 +144,7 @@ go tool cover -html=coverage.out
 2. **Mã hóa**: AES encryption/decryption, key generation, GCM mode
 3. **Giới hạn truy cập**: URL tạm thời, kiểm soát thời gian, permissions
 4. **E2E Encryption**: Chia sẻ an toàn, RSA key exchange, access control
+5. **Multi-Share Link**: Kiểm thử các ràng buộc Max Visits và Expiration
 
 ### Các test có thể skip:
 

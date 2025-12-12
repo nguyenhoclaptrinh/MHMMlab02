@@ -142,6 +142,7 @@ Kết hợp **Automated Testing** (Go test framework) và **Manual Testing** (CL
 5. **Integration & Stress**: 
     - Full Workflow ✅
     - **Stress Test**: 10 User tạo 50 note cùng lúc ✅ (Đã khắc phục lỗi lock DB nhờ tối ưu hóa WAL).
+    - **Share Link Scenarios**: Kiểm thử đúng hạn (Expiration) và lượt truy cập (Max Visits) ✅
 
 #### Manual Test Results
 - **Đăng ký/Đăng nhập**: Thành công, tạo file `.pem` local.
