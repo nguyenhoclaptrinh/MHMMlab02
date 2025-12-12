@@ -11,42 +11,41 @@ import (
 )
 
 func TestMultiShareLinks(t *testing.T) {
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// User A creates a note
-	tokenA := createTestUser(t, server, "userA", "Password123!")
+	tokenA := createTestUser(t, ctx.Server, "userA", "Password123!")
 
 	// Create Note
-	noteID := createNote(t, server, tokenA, "userA", "Secret Content")
+	noteID := createNote(t, ctx.Server, tokenA, "userA", "Secret Content")
 
 	// 1. Create Link 1 (Max Visits = 2, Duration = infinite/long)
-	shareToken1 := createShareLink(t, server, tokenA, noteID, "8760h", 2)
+	shareToken1 := createShareLink(t, ctx.Server, tokenA, noteID, "8760h", 2)
 
 	// 2. Create Link 2 (Expires = 2 seconds)
-	shareToken2 := createShareLink(t, server, tokenA, noteID, "2s", 0)
+	shareToken2 := createShareLink(t, ctx.Server, tokenA, noteID, "2s", 0)
 
 	// 3. Verify Link 1 Access (Visit 1 - OK)
-	verifyPublicAccess(t, server, shareToken1, true)
+	verifyPublicAccess(t, ctx.Server, shareToken1, true)
 
 	// 4. Verify Link 1 Access (Visit 2 - OK)
-	verifyPublicAccess(t, server, shareToken1, true)
+	verifyPublicAccess(t, ctx.Server, shareToken1, true)
 
 	// 5. Verify Link 1 Access (Visit 3 - Fail - Gone)
-	verifyPublicAccess(t, server, shareToken1, false)
+	verifyPublicAccess(t, ctx.Server, shareToken1, false)
 
 	// 6. Verify Link 2 Access (Time OK)
-	verifyPublicAccess(t, server, shareToken2, true)
+	verifyPublicAccess(t, ctx.Server, shareToken2, true)
 
 	// 7. Wait for Link 2 to expire
 	time.Sleep(3 * time.Second)
 
 	// 8. Verify Link 2 Access (Time Expired - Fail - Gone)
-	verifyPublicAccess(t, server, shareToken2, false)
+	verifyPublicAccess(t, ctx.Server, shareToken2, false)
 
 	// 9. Verify Owner can still access note
-	verifyOwnerAccess(t, server, tokenA, noteID)
+	verifyOwnerAccess(t, ctx.Server, tokenA, noteID)
 }
 
 func createNote(t *testing.T, server *httptest.Server, token string, username string, content string) string {

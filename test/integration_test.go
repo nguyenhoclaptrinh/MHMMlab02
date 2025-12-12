@@ -20,9 +20,8 @@ import (
 
 // TestFullUserWorkflow kiểm tra workflow hoàn chỉnh
 func TestFullUserWorkflow(t *testing.T) {
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// 1. Register
 	regPayload := map[string]interface{}{
@@ -32,7 +31,7 @@ func TestFullUserWorkflow(t *testing.T) {
 	}
 	regBody, _ := json.Marshal(regPayload)
 
-	resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
+	resp, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
 	if err != nil {
 		t.Fatalf("Registration failed: %v", err)
 	}
@@ -49,7 +48,7 @@ func TestFullUserWorkflow(t *testing.T) {
 	}
 	loginBody, _ := json.Marshal(loginPayload)
 
-	loginResp, err := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	loginResp, err := http.Post(ctx.Server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
 	if err != nil {
 		t.Fatalf("Login failed: %v", err)
 	}
@@ -79,7 +78,7 @@ func TestFullUserWorkflow(t *testing.T) {
 	noteBody, _ := json.Marshal(notePayload)
 
 	client := &http.Client{}
-	noteReq, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	noteReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	noteReq.Header.Set("Content-Type", "application/json")
 	noteReq.Header.Set("Authorization", "Bearer "+token)
 
@@ -94,7 +93,7 @@ func TestFullUserWorkflow(t *testing.T) {
 	noteID := noteData["id"].(string)
 
 	// 4. Retrieve and decrypt note
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token)
 
 	getResp, err := client.Do(getReq)
@@ -124,11 +123,10 @@ func TestConcurrentNoteCreation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping concurrent test in short mode")
 	}
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "concurrentuser", "Password123!")
+	token := createTestUser(t, ctx.Server, "concurrentuser", "Password123!")
 
 	var wg sync.WaitGroup
 	numNotes := 5
@@ -148,7 +146,7 @@ func TestConcurrentNoteCreation(t *testing.T) {
 			noteBody, _ := json.Marshal(notePayload)
 
 			client := &http.Client{}
-			req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+			req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
 
@@ -189,9 +187,8 @@ func TestStressMultipleUsers(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	numUsers := 2
 	notesPerUser := 2
@@ -200,7 +197,7 @@ func TestStressMultipleUsers(t *testing.T) {
 	users := make([]string, numUsers)
 	for i := 0; i < numUsers; i++ {
 		username := "stressuser" + string(rune('0'+i))
-		token := createTestUserWithRetry(t, server, username, "Password123!")
+		token := createTestUserWithRetry(t, ctx.Server, username, "Password123!")
 		users[i] = token
 	}
 
@@ -224,7 +221,7 @@ func TestStressMultipleUsers(t *testing.T) {
 				noteBody, _ := json.Marshal(notePayload)
 
 				client := &http.Client{}
-				req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+				req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Authorization", "Bearer "+token)
 
@@ -264,8 +261,8 @@ func TestStressMultipleUsers(t *testing.T) {
 
 // BenchmarkRegisterUser đo performance đăng ký
 func BenchmarkRegisterUser(b *testing.B) {
-	server := setupTestServer()
-	defer server.Close()
+	ctx := setupTestServer(b)
+	defer ctx.Cleanup()
 	defer cleanupTestData(nil)
 
 	b.ResetTimer()
@@ -277,14 +274,14 @@ func BenchmarkRegisterUser(b *testing.B) {
 		}
 		body, _ := json.Marshal(payload)
 
-		http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
+		http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(body))
 	}
 }
 
 // BenchmarkLoginUser đo performance đăng nhập
 func BenchmarkLoginUser(b *testing.B) {
-	server := setupTestServer()
-	defer server.Close()
+	ctx := setupTestServer(b)
+	defer ctx.Cleanup()
 	defer cleanupTestData(nil)
 
 	// Tạo test user trước
@@ -294,7 +291,7 @@ func BenchmarkLoginUser(b *testing.B) {
 		"public_key": []byte("test_key"),
 	}
 	regBody, _ := json.Marshal(regPayload)
-	http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
+	http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
 
 	loginPayload := map[string]interface{}{
 		"username": "benchloginuser",
@@ -304,7 +301,7 @@ func BenchmarkLoginUser(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resp, _ := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
+		resp, _ := http.Post(ctx.Server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
 		if resp != nil {
 			resp.Body.Close()
 		}
@@ -313,8 +310,8 @@ func BenchmarkLoginUser(b *testing.B) {
 
 // BenchmarkCreateNote đo performance tạo note
 func BenchmarkCreateNote(b *testing.B) {
-	server := setupTestServer()
-	defer server.Close()
+	ctx := setupTestServer(b)
+	defer ctx.Cleanup()
 	defer cleanupTestData(nil)
 
 	// Setup user
@@ -324,14 +321,14 @@ func BenchmarkCreateNote(b *testing.B) {
 		"public_key": []byte("test_key"),
 	}
 	regBody, _ := json.Marshal(regPayload)
-	http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
+	http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(regBody))
 
 	loginPayload := map[string]interface{}{
 		"username": "benchnoteuser",
 		"password": "Password123!",
 	}
 	loginBody, _ := json.Marshal(loginPayload)
-	loginResp, _ := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
+	loginResp, _ := http.Post(ctx.Server.URL+"/login", "application/json", bytes.NewBuffer(loginBody))
 
 	var loginData map[string]interface{}
 	json.NewDecoder(loginResp.Body).Decode(&loginData)
@@ -350,7 +347,7 @@ func BenchmarkCreateNote(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+		req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
 

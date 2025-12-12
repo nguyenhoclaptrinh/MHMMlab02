@@ -12,15 +12,14 @@ import (
 )
 
 func TestRevokeShare(t *testing.T) {
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// 1. Create User A (Owner)
-	tokenA := createTestUser(t, server, "owneruser", "Pass123!A")
+	tokenA := createTestUser(t, ctx.Server, "owneruser", "Pass123!A")
 
 	// 2. Create User B (Target)
-	tokenB := createTestUser(t, server, "targetuser", "Pass123!B")
+	tokenB := createTestUser(t, ctx.Server, "targetuser", "Pass123!B")
 
 	// 3. User A creates a note
 	noteTitle := "Secret Note"
@@ -34,7 +33,7 @@ func TestRevokeShare(t *testing.T) {
 	noteBody, _ := json.Marshal(notePayload)
 
 	client := &http.Client{}
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tokenA)
 
@@ -56,7 +55,7 @@ func TestRevokeShare(t *testing.T) {
 	}
 	shareBody, _ := json.Marshal(sharePayload)
 
-	reqShare, _ := http.NewRequest("POST", server.URL+"/notes/share", bytes.NewBuffer(shareBody))
+	reqShare, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share", bytes.NewBuffer(shareBody))
 	reqShare.Header.Set("Content-Type", "application/json")
 	reqShare.Header.Set("Authorization", "Bearer "+tokenA)
 
@@ -67,7 +66,7 @@ func TestRevokeShare(t *testing.T) {
 	respShare.Body.Close()
 
 	// 5. Verify User B can see the note
-	reqListB, _ := http.NewRequest("GET", server.URL+"/notes", nil)
+	reqListB, _ := http.NewRequest("GET", ctx.Server.URL+"/notes", nil)
 	reqListB.Header.Set("Authorization", "Bearer "+tokenB)
 	respListB, _ := client.Do(reqListB)
 
@@ -85,7 +84,7 @@ func TestRevokeShare(t *testing.T) {
 	}
 
 	// 6. User A Revokes Share (Unshare)
-	reqRevoke, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/notes/share?note_id=%s&target_user=targetuser", server.URL, noteID), nil)
+	reqRevoke, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/notes/share?note_id=%s&target_user=targetuser", ctx.Server.URL, noteID), nil)
 	reqRevoke.Header.Set("Authorization", "Bearer "+tokenA)
 
 	respRevoke, err := client.Do(reqRevoke)

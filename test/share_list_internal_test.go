@@ -11,13 +11,12 @@ import (
 )
 
 func TestListSharedOutNotes(t *testing.T) {
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// 1. Create Users
-	tokenA := createTestUser(t, server, "alice", "Password123!")
-	createTestUser(t, server, "bob", "Password123!") // Just to exist
+	tokenA := createTestUser(t, ctx.Server, "alice", "Password123!")
+	createTestUser(t, ctx.Server, "bob", "Password123!") // Just to exist
 
 	// 2. Alice creates a note
 	notePayload := map[string]interface{}{
@@ -30,7 +29,7 @@ func TestListSharedOutNotes(t *testing.T) {
 		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Authorization", "Bearer "+tokenA)
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -55,7 +54,7 @@ func TestListSharedOutNotes(t *testing.T) {
 		"encrypted_key": []byte("dummy_key"),
 	}
 	shareBody, _ := json.Marshal(sharePayload)
-	reqShare, _ := http.NewRequest("POST", server.URL+"/notes/share", bytes.NewBuffer(shareBody))
+	reqShare, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share", bytes.NewBuffer(shareBody))
 	reqShare.Header.Set("Authorization", "Bearer "+tokenA)
 
 	respShare, err := client.Do(reqShare)
@@ -69,7 +68,7 @@ func TestListSharedOutNotes(t *testing.T) {
 	}
 
 	// 4. Alice lists shared notes
-	reqList, _ := http.NewRequest("GET", server.URL+"/notes/shared-out", nil)
+	reqList, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/shared-out", nil)
 	reqList.Header.Set("Authorization", "Bearer "+tokenA)
 
 	respList, err := client.Do(reqList)

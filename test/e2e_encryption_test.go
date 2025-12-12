@@ -19,11 +19,10 @@ import (
 // TestEndToEndNoteEncryption kiểm tra note được mã hóa end-to-end
 func TestEndToEndNoteEncryption(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "e2euser", "Password123!")
+	token := createTestUser(t, ctx.Server, "e2euser", "Password123!")
 
 	// Tạo AES key
 	key := make([]byte, 32)
@@ -47,7 +46,7 @@ func TestEndToEndNoteEncryption(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -63,7 +62,7 @@ func TestEndToEndNoteEncryption(t *testing.T) {
 	noteID := noteResp["id"].(string)
 
 	// Lấy note về
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token)
 
 	getResp, err := client.Do(getReq)
@@ -100,22 +99,31 @@ func TestEndToEndNoteEncryption(t *testing.T) {
 // TestSharedNoteEncryptedKeys kiểm tra shared note với encrypted keys
 func TestSharedNoteEncryptedKeys(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token1 := createTestUser(t, server, "sender", "Password123!")
-	token2 := createTestUser(t, server, "receiver", "Password123!")
+	token1 := createTestUser(t, ctx.Server, "sender", "Password123!")
+	token2 := createTestUser(t, ctx.Server, "receiver", "Password123!")
 
 	// User 1 tạo encrypted note
 	key1 := make([]byte, 32)
-	io.ReadFull(rand.Reader, key1)
+	if _, err := io.ReadFull(rand.Reader, key1); err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
 
 	plaintext := "Shared encrypted message"
-	block, _ := aes.NewCipher(key1)
-	gcm, _ := cipher.NewGCM(block)
+	block, err := aes.NewCipher(key1)
+	if err != nil {
+		t.Fatalf("Failed to create cipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("Failed to create GCM: %v", err)
+	}
 	nonce := make([]byte, gcm.NonceSize())
-	io.ReadFull(rand.Reader, nonce)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		t.Fatalf("Failed to generate nonce: %v", err)
+	}
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
 	encryptedContent := base64.StdEncoding.EncodeToString(ciphertext)
 
@@ -125,9 +133,12 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 			"sender": key1,
 		},
 	}
-	noteBody, _ := json.Marshal(notePayload)
+	noteBody, err := json.Marshal(notePayload)
+	if err != nil {
+		t.Fatalf("Failed to marshal note payload: %v", err)
+	}
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token1)
 
@@ -139,7 +150,9 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 	defer resp.Body.Close()
 
 	var noteResp map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&noteResp)
+	if err := json.NewDecoder(resp.Body).Decode(&noteResp); err != nil {
+		t.Fatalf("Failed to decode note response: %v", err)
+	}
 	noteID := noteResp["id"].(string)
 
 	// Simulate key sharing: encrypt key1 với public key của receiver
@@ -151,9 +164,12 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 		"target_user":   "receiver",
 		"encrypted_key": encryptedKey,
 	}
-	shareBody, _ := json.Marshal(sharePayload)
+	shareBody, err := json.Marshal(sharePayload)
+	if err != nil {
+		t.Fatalf("Failed to marshal share payload: %v", err)
+	}
 
-	shareReq, _ := http.NewRequest("POST", server.URL+"/notes/share", bytes.NewBuffer(shareBody))
+	shareReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share", bytes.NewBuffer(shareBody))
 	shareReq.Header.Set("Content-Type", "application/json")
 	shareReq.Header.Set("Authorization", "Bearer "+token1)
 
@@ -168,7 +184,7 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 	}
 
 	// Reciever gets note to check keys
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token2)
 
 	getResp, err := client.Do(getReq)
@@ -182,7 +198,9 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 	}
 
 	var noteObj map[string]interface{}
-	json.NewDecoder(getResp.Body).Decode(&noteObj)
+	if err := json.NewDecoder(getResp.Body).Decode(&noteObj); err != nil {
+		t.Fatalf("Failed to decode note object: %v", err)
+	}
 
 	if keys, ok := noteObj["shared_keys"].(map[string]interface{}); ok {
 		if _, ok := keys["receiver"]; !ok {
@@ -198,14 +216,13 @@ func TestSharedNoteEncryptedKeys(t *testing.T) {
 // TestMultipleUsersE2EEncryption kiểm tra nhiều users với E2E encryption
 func TestMultipleUsersE2EEncryption(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Tạo 3 users
-	token1 := createTestUser(t, server, "alice", "Password123!")
-	token2 := createTestUser(t, server, "bob", "Password123!")
-	token3 := createTestUser(t, server, "charlie", "Password123!")
+	token1 := createTestUser(t, ctx.Server, "alice", "Password123!")
+	token2 := createTestUser(t, ctx.Server, "bob", "Password123!")
+	token3 := createTestUser(t, ctx.Server, "charlie", "Password123!")
 
 	// Mỗi user tạo encrypted note với key riêng
 	users := []struct {
@@ -236,7 +253,7 @@ func TestMultipleUsersE2EEncryption(t *testing.T) {
 		}
 		noteBody, _ := json.Marshal(notePayload)
 
-		req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+		req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+u.token)
 
@@ -254,11 +271,10 @@ func TestMultipleUsersE2EEncryption(t *testing.T) {
 // TestEncryptionKeyRotation kiểm tra key rotation scenario
 func TestEncryptionKeyRotation(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "keyrotuser", "Password123!")
+	token := createTestUser(t, ctx.Server, "keyrotuser", "Password123!")
 
 	// Tạo note với key1
 	key1 := make([]byte, 32)
@@ -279,7 +295,7 @@ func TestEncryptionKeyRotation(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -299,7 +315,7 @@ func TestEncryptionKeyRotation(t *testing.T) {
 	io.ReadFull(rand.Reader, key2)
 
 	// Get note
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token)
 
 	getResp, err := client.Do(getReq)

@@ -14,19 +14,20 @@ import (
 
 // KIỂM TRA ĐĂNG KÝ THÀNH CÔNG
 func TestRegisterSuccess(t *testing.T) {
-
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	payload := map[string]interface{}{
 		"username":   "testuser",
 		"password":   "Test@123456",
 		"public_key": []byte("test_public_key"),
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Failed to marshal JSON: %v", err)
+	}
 
-	resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
@@ -39,10 +40,8 @@ func TestRegisterSuccess(t *testing.T) {
 
 // TestRegisterDuplicateUsername kiểm tra đăng ký với username đã tồn tại
 func TestRegisterDuplicateUsername(t *testing.T) {
-
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Đăng ký lần 1
 	payload := map[string]interface{}{
@@ -50,16 +49,19 @@ func TestRegisterDuplicateUsername(t *testing.T) {
 		"password":   "Test@123456",
 		"public_key": []byte("test_public_key"),
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Failed to marshal payload: %v", err)
+	}
 
-	resp1, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
+	resp1, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
 	resp1.Body.Close()
 
 	// Đăng ký lần 2 với cùng username
-	resp2, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
+	resp2, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
@@ -72,13 +74,11 @@ func TestRegisterDuplicateUsername(t *testing.T) {
 
 // TestRegisterInvalidJSON kiểm tra đăng ký với JSON không hợp lệ
 func TestRegisterInvalidJSON(t *testing.T) {
-
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	invalidJSON := []byte(`{"username": "testuser", "password": invalid}`)
-	resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(invalidJSON))
+	resp, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(invalidJSON))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
@@ -91,22 +91,23 @@ func TestRegisterInvalidJSON(t *testing.T) {
 
 // TestLoginSuccess kiểm tra đăng nhập thành công
 func TestLoginSuccess(t *testing.T) {
-
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Tạo user trước
-	createTestUser(t, server, "loginuser", "Password123!")
+	createTestUser(t, ctx.Server, "loginuser", "Password123!")
 
 	// Đăng nhập
 	payload := map[string]interface{}{
 		"username": "loginuser",
 		"password": "Password123!",
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Failed to marshal login payload: %v", err)
+	}
 
-	resp, err := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post(ctx.Server.URL+"/login", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
@@ -126,12 +127,11 @@ func TestLoginSuccess(t *testing.T) {
 // TestLoginInvalidCredentials kiểm tra đăng nhập với thông tin sai
 func TestLoginInvalidCredentials(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Tạo user
-	createTestUser(t, server, "validuser", "Password123!")
+	createTestUser(t, ctx.Server, "validuser", "Password123!")
 
 	tests := []struct {
 		name     string
@@ -149,9 +149,12 @@ func TestLoginInvalidCredentials(t *testing.T) {
 				"username": tt.username,
 				"password": tt.password,
 			}
-			body, _ := json.Marshal(payload)
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatalf("Failed to marshal payload: %v", err)
+			}
 
-			resp, err := http.Post(server.URL+"/login", "application/json", bytes.NewBuffer(body))
+			resp, err := http.Post(ctx.Server.URL+"/login", "application/json", bytes.NewBuffer(body))
 			if err != nil {
 				t.Fatalf("Failed to make request: %v", err)
 			}
@@ -167,16 +170,15 @@ func TestLoginInvalidCredentials(t *testing.T) {
 // TestPasswordHashingInDatabase kiểm tra mật khẩu được hash trong database
 func TestPasswordHashingInDatabase(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	password := "MySecure123!"
-	createTestUser(t, server, "hashuser", password)
+	createTestUser(t, ctx.Server, "hashuser", password)
 
 	// Kiểm tra password trong DB không phải plaintext
 	var storedPassword string
-	err := testDB.QueryRow("SELECT password_hash FROM users WHERE username = ?", "hashuser").Scan(&storedPassword)
+	err := ctx.DB.QueryRow("SELECT password_hash FROM users WHERE username = ?", "hashuser").Scan(&storedPassword)
 	if err != nil {
 		t.Fatalf("Failed to query database: %v", err)
 	}
@@ -194,12 +196,11 @@ func TestPasswordHashingInDatabase(t *testing.T) {
 // TestInvalidToken kiểm tra token không hợp lệ
 func TestInvalidToken(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Tạo user và note
-	token := createTestUser(t, server, "tokenuser", "Password123!")
+	token := createTestUser(t, ctx.Server, "tokenuser", "Password123!")
 
 	notePayload := map[string]interface{}{
 		"content": base64.StdEncoding.EncodeToString([]byte("Test note content")),
@@ -207,7 +208,10 @@ func TestInvalidToken(t *testing.T) {
 			"tokenuser": []byte("dummy_key"),
 		},
 	}
-	noteBody, _ := json.Marshal(notePayload)
+	noteBody, err := json.Marshal(notePayload)
+	if err != nil {
+		t.Fatalf("Failed to marshal note payload: %v", err)
+	}
 
 	tests := []struct {
 		name  string
@@ -220,7 +224,7 @@ func TestInvalidToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+			req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 			req.Header.Set("Content-Type", "application/json")
 			if tt.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tt.token)
@@ -242,9 +246,8 @@ func TestInvalidToken(t *testing.T) {
 
 // TestConcurrentRegistration kiểm tra đăng ký đồng thời
 func TestConcurrentRegistration(t *testing.T) {
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	done := make(chan bool, 10)
 
@@ -255,9 +258,14 @@ func TestConcurrentRegistration(t *testing.T) {
 				"password":   "Password123!",
 				"public_key": []byte("test_key"),
 			}
-			body, _ := json.Marshal(payload)
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Errorf("Failed to marshal payload for user %d: %v", id, err)
+				done <- true
+				return
+			}
 
-			resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
+			resp, err := http.Post(ctx.Server.URL+"/register", "application/json", bytes.NewBuffer(body))
 			if err != nil {
 				t.Errorf("Failed to register user %d: %v", id, err)
 			} else {

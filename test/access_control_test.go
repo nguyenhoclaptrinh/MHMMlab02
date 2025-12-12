@@ -15,13 +15,12 @@ import (
 // TestShareNoteWithAnotherUser kiểm tra chia sẻ note với user khác
 func TestShareNoteWithAnotherUser(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
 	// Tạo 2 users
-	token1 := createTestUser(t, server, "owner", "Password123!")
-	token2 := createTestUser(t, server, "recipient", "Password123!")
+	token1 := createTestUser(t, ctx.Server, "owner", "Password123!")
+	token2 := createTestUser(t, ctx.Server, "recipient", "Password123!")
 
 	// User 1 tạo note
 	notePayload := map[string]interface{}{
@@ -32,7 +31,7 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token1)
 
@@ -59,7 +58,7 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 	}
 	shareBody, _ := json.Marshal(sharePayload)
 
-	shareReq, _ := http.NewRequest("POST", server.URL+"/notes/share", bytes.NewBuffer(shareBody))
+	shareReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share", bytes.NewBuffer(shareBody))
 	shareReq.Header.Set("Content-Type", "application/json")
 	shareReq.Header.Set("Authorization", "Bearer "+token1)
 
@@ -74,7 +73,7 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 	}
 
 	// User 2 access note
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token2)
 
 	getResp, err := client.Do(getReq)
@@ -91,11 +90,10 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 // TestShareLinkGeneration kiểm tra tạo share link
 func TestShareLinkGeneration(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "linkcreator", "Password123!")
+	token := createTestUser(t, ctx.Server, "linkcreator", "Password123!")
 
 	// Tạo note
 	notePayload := map[string]interface{}{
@@ -106,7 +104,7 @@ func TestShareLinkGeneration(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -128,7 +126,7 @@ func TestShareLinkGeneration(t *testing.T) {
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
-	linkReq, _ := http.NewRequest("POST", server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
+	linkReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
 	linkReq.Header.Set("Content-Type", "application/json")
 	linkReq.Header.Set("Authorization", "Bearer "+token)
 
@@ -152,11 +150,10 @@ func TestShareLinkGeneration(t *testing.T) {
 // TestAccessPublicNote kiểm tra access public note via share link
 func TestAccessPublicNote(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "publicnoteuser", "Password123!")
+	token := createTestUser(t, ctx.Server, "publicnoteuser", "Password123!")
 
 	// Tạo note
 	notePayload := map[string]interface{}{
@@ -167,7 +164,7 @@ func TestAccessPublicNote(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -189,7 +186,7 @@ func TestAccessPublicNote(t *testing.T) {
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
-	linkReq, _ := http.NewRequest("POST", server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
+	linkReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
 	linkReq.Header.Set("Content-Type", "application/json")
 	linkReq.Header.Set("Authorization", "Bearer "+token)
 
@@ -204,7 +201,7 @@ func TestAccessPublicNote(t *testing.T) {
 	shareToken := linkData["share_token"].(string)
 
 	// Access note qua public URL (không cần auth)
-	publicReq, _ := http.NewRequest("GET", server.URL+"/public/notes/"+shareToken, nil)
+	publicReq, _ := http.NewRequest("GET", ctx.Server.URL+"/public/notes/"+shareToken, nil)
 	publicResp, err := client.Do(publicReq)
 	if err != nil {
 		t.Fatalf("Failed to access public note: %v", err)
@@ -219,11 +216,10 @@ func TestAccessPublicNote(t *testing.T) {
 // TestExpiredShareLink kiểm tra expired share link
 func TestExpiredShareLink(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token := createTestUser(t, server, "expireduser", "Password123!")
+	token := createTestUser(t, ctx.Server, "expireduser", "Password123!")
 
 	// Tạo note
 	notePayload := map[string]interface{}{
@@ -234,7 +230,7 @@ func TestExpiredShareLink(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -256,7 +252,7 @@ func TestExpiredShareLink(t *testing.T) {
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
-	linkReq, _ := http.NewRequest("POST", server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
+	linkReq, _ := http.NewRequest("POST", ctx.Server.URL+"/notes/share-link", bytes.NewBuffer(linkBody))
 	linkReq.Header.Set("Content-Type", "application/json")
 	linkReq.Header.Set("Authorization", "Bearer "+token)
 
@@ -271,7 +267,7 @@ func TestExpiredShareLink(t *testing.T) {
 	shareToken := linkData["share_token"].(string)
 
 	// Thử access expired note
-	publicReq, _ := http.NewRequest("GET", server.URL+"/public/notes/"+shareToken, nil)
+	publicReq, _ := http.NewRequest("GET", ctx.Server.URL+"/public/notes/"+shareToken, nil)
 	publicResp, err := client.Do(publicReq)
 	if err != nil {
 		t.Fatalf("Failed to access public note: %v", err)
@@ -286,12 +282,11 @@ func TestExpiredShareLink(t *testing.T) {
 // TestUnauthorizedNoteAccess kiểm tra không thể access note của người khác
 func TestUnauthorizedNoteAccess(t *testing.T) {
 
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
+	ctx := setupTestServer(t)
+	defer ctx.Cleanup()
 
-	token1 := createTestUser(t, server, "user1", "Password123!")
-	token2 := createTestUser(t, server, "user2", "Password123!")
+	token1 := createTestUser(t, ctx.Server, "user1", "Password123!")
+	token2 := createTestUser(t, ctx.Server, "user2", "Password123!")
 
 	// User 1 tạo note
 	notePayload := map[string]interface{}{
@@ -302,7 +297,7 @@ func TestUnauthorizedNoteAccess(t *testing.T) {
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
-	req, _ := http.NewRequest("POST", server.URL+"/notes", bytes.NewBuffer(noteBody))
+	req, _ := http.NewRequest("POST", ctx.Server.URL+"/notes", bytes.NewBuffer(noteBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token1)
 
@@ -318,7 +313,7 @@ func TestUnauthorizedNoteAccess(t *testing.T) {
 	noteID := noteResp["id"].(string)
 
 	// User 2 thử access note (chưa share)
-	getReq, _ := http.NewRequest("GET", server.URL+"/notes/"+noteID, nil)
+	getReq, _ := http.NewRequest("GET", ctx.Server.URL+"/notes/"+noteID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+token2)
 
 	getResp, err := client.Do(getReq)

@@ -5,10 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,115 +16,104 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var testDB *sql.DB
-var testDBPath string
-
-// setupTestServer tạo real HTTP test server với router thật
-func setupTestServer() *httptest.Server {
-	var err error
-	// Use file-based DB for better WAL/concurrency support in tests
-	// Use file-based DB for better WAL/concurrency support in tests
-	testDBPath = fmt.Sprintf("test_%d.db", time.Now().UnixNano())
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(30000)", testDBPath)
-	testDB, err = sql.Open("sqlite", dsn)
-	if err != nil {
-		log.Fatal("Failed to create test database:", err)
-	}
-
-	testDB.SetMaxOpenConns(10) // WAL allows concurrent readers
-
-	// Tạo bảng Users
-	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS users (
-		username TEXT PRIMARY KEY,
-		password_hash TEXT,
-		salt TEXT,
-		public_key BLOB
-	)`)
-	if err != nil {
-		log.Fatal("Failed to create users table:", err)
-	}
-
-	// Tạo bảng Notes
-	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS notes (
-		id TEXT PRIMARY KEY,
-		owner_id TEXT,
-		title TEXT,
-		filename TEXT,
-		content BLOB,
-		encrypted BOOLEAN,
-		created_at DATETIME
-	)`)
-	if err != nil {
-		log.Fatal("Failed to create notes table:", err)
-	}
-
-	// Index cho notes
-	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id);`); err != nil {
-		log.Fatal("Failed to create index idx_notes_owner:", err)
-	}
-
-	// Tạo bảng SharedKeys
-	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS shared_keys (
-		note_id TEXT,
-		user_id TEXT,
-		encrypted_key BLOB,
-		PRIMARY KEY (note_id, user_id)
-	)`)
-	if err != nil {
-		log.Fatal("Failed to create shared_keys table:", err)
-	}
-
-	// Index cho shared_keys
-	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_shared_keys_user ON shared_keys(user_id);`); err != nil {
-		log.Fatal("Failed to create index idx_shared_keys_user:", err)
-	}
-
-	// Tạo bảng ShareLinks
-	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS share_links (
-		token TEXT PRIMARY KEY,
-		note_id TEXT,
-		created_at DATETIME,
-		expires_at DATETIME,
-		max_visits INTEGER,
-		visit_count INTEGER
-	)`)
-	if err != nil {
-		log.Fatal("Failed to create share_links table:", err)
-	}
-
-	// Tạo HTTP routes
-	mux := http.NewServeMux()
-	// Use real handlers to ensure we test the actual logic
-	server := handlers.NewServer(testDB)
-	server.RegisterRoutes(mux)
-
-	/* Deprecated: Manual test handlers replaced by real handlers
-	mux.HandleFunc("/register", handleRegisterTest)
-	mux.HandleFunc("/login", handleLoginTest)
-	mux.HandleFunc("/notes", handleNotesTest)
-	mux.HandleFunc("/notes/", handleNoteDetailTest)
-	mux.HandleFunc("/users/", handleGetUserTest)
-	mux.HandleFunc("/notes/share", handleShareNoteTest)
-	mux.HandleFunc("/notes/share-link", handleGenerateShareLinkTest)
-	mux.HandleFunc("/public/notes/", handleGetPublicNoteTest)
-	*/
-
-	// Tạo httptest.Server với real HTTP listener
-	return httptest.NewServer(mux)
+// TestContext chứa tất cả dependencies cho mỗi test (isolated)
+type TestContext struct {
+	Server *httptest.Server
+	DB     *sql.DB
+	DBPath string
 }
 
-// cleanupTestData xóa toàn bộ dữ liệu test
-func cleanupTestData(t *testing.T) {
-	if testDB != nil {
-		testDB.Close()
-		os.Remove(testDBPath)
-		os.Remove(testDBPath + "-shm")
-		os.Remove(testDBPath + "-wal")
+// setupTestServer tạo isolated test context cho mỗi test
+func setupTestServer(t testing.TB) *TestContext {
+	t.Helper()
+
+	// Tạo temp directory cho database (auto cleanup)
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
 	}
+
+	// Tạo schema (reuse từ production nếu có migration)
+	schema := `
+	CREATE TABLE users (
+		username TEXT PRIMARY KEY,
+		password_hash TEXT NOT NULL,
+		salt TEXT NOT NULL,
+		public_key BLOB
+	);
+
+	CREATE TABLE notes (
+		id TEXT PRIMARY KEY,
+		owner_id TEXT NOT NULL,
+		content TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		expires_at DATETIME,
+		share_token TEXT,
+		title TEXT,
+		filename TEXT,
+		file_content TEXT,
+		encrypted BOOLEAN DEFAULT 1
+	);
+
+	CREATE INDEX idx_notes_owner ON notes(owner_id);
+
+	CREATE TABLE shared_keys (
+		note_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		encrypted_key TEXT NOT NULL,
+		PRIMARY KEY (note_id, user_id)
+	);
+
+	CREATE INDEX idx_shared_keys_user ON shared_keys(user_id);
+
+	CREATE TABLE share_links (
+		token TEXT PRIMARY KEY,
+		note_id TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		expires_at DATETIME,
+		max_visits INTEGER,
+		visit_count INTEGER DEFAULT 0
+	);
+	`
+
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("Failed to create schema: %v", err)
+	}
+
+	// Tạo HTTP routes với real handlers
+	server := handlers.NewServer(db)
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+
+	return &TestContext{
+		Server: httptest.NewServer(mux),
+		DB:     db,
+		DBPath: dbPath,
+	}
+}
+
+// Cleanup đóng tất cả resources
+func (ctx *TestContext) Cleanup() {
+	if ctx.Server != nil {
+		ctx.Server.Close()
+	}
+	if ctx.DB != nil {
+		ctx.DB.Close()
+	}
+	// TempDir tự động cleanup bởi testing framework
+}
+
+// cleanupTestData - deprecated, dùng ctx.Cleanup() thay thế
+func cleanupTestData(t testing.TB) {
+	// Backward compatibility - no-op vì TempDir tự cleanup
 }
 
 // createTestUser helper để tạo user và trả về token
-func createTestUser(t *testing.T, server *httptest.Server, username, password string) string {
+func createTestUser(t testing.TB, server *httptest.Server, username, password string) string {
 	// Register via real HTTP
 	regPayload := map[string]interface{}{
 		"username":   username,
@@ -167,7 +155,7 @@ func createTestUser(t *testing.T, server *httptest.Server, username, password st
 }
 
 // createTestUserWithRetry tạo user với retry logic để tránh SQLite lock
-func createTestUserWithRetry(t *testing.T, server *httptest.Server, username, password string) string {
+func createTestUserWithRetry(t testing.TB, server *httptest.Server, username, password string) string {
 	maxRetries := 3
 	var lastErr error
 

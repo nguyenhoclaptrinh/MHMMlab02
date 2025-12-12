@@ -34,6 +34,16 @@ else
 fi
 
 echo ""
+echo "🔑 Running Crypto Unit Tests (ECDH/AES)..."
+if go test -v ./test/crypto_unit_test.go ./test/test_helpers.go -timeout 10s > /tmp/crypto_unit_test.log 2>&1; then
+    echo -e "${GREEN}✅ Crypto Unit Tests: PASSED${NC}"
+    PASSED=$((PASSED+1))
+else
+    echo -e "${RED}❌ Crypto Unit Tests: FAILED${NC}"
+    FAILED=$((FAILED+1))
+fi
+
+echo ""
 echo "🔒 Running Access Control Tests..."
 if go test -v ./test/access_control_test.go ./test/test_helpers.go -timeout 30s > /tmp/access_test.log 2>&1; then
     echo -e "${GREEN}✅ Access Control Tests: PASSED${NC}"
@@ -77,7 +87,7 @@ echo ""
 echo "=================================="
 echo "   Test Summary"
 echo "=================================="
-echo -e "${GREEN}Passed: $PASSED / 6 test suites${NC}"
+echo -e "${GREEN}Passed: $PASSED / 7 test suites${NC}"
 if [ $FAILED -gt 0 ]; then
     echo -e "${RED}Failed: $FAILED${NC}"
     echo ""
