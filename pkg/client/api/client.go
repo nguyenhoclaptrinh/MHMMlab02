@@ -231,3 +231,23 @@ func (c *Client) GetPublicNote(url string) (*models.Note, error) {
 	err = json.NewDecoder(resp.Body).Decode(&note)
 	return &note, err
 }
+
+func (c *Client) ListSharedOutNotes() ([]models.SharedNoteInfo, error) {
+	req, _ := http.NewRequest("GET", c.BaseURL+"/notes/shared-out", nil)
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("lỗi lấy danh sách chia sẻ (Status: %s)", resp.Status)
+	}
+
+	var notes []models.SharedNoteInfo
+	err = json.NewDecoder(resp.Body).Decode(&notes)
+	return notes, err
+}

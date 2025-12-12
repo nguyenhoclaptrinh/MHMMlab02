@@ -43,6 +43,14 @@ type AuthRequest struct {
 	Password string `json:"password"`
 }
 
+// SharedNoteInfo represents information about a note shared with another user
+type SharedNoteInfo struct {
+	NoteID     string `json:"note_id"`
+	Title      string `json:"title"`
+	Filename   string `json:"filename"`
+	SharedWith string `json:"shared_with"` // Username of recipient
+}
+
 // AuthResponse returns token and user info
 type AuthResponse struct {
 	Token string `json:"token"`

@@ -70,8 +70,9 @@ func (app *App) authMenu() {
 	fmt.Println("5. Chia sẻ qua Link")
 	fmt.Println("6. Tải từ Link")
 	fmt.Println("7. Xóa ghi chú")
-	fmt.Println("8. Đăng xuất")
-	fmt.Println("9. Thoát")
+	fmt.Println("8. Liệt kê note đã chia sẻ")
+	fmt.Println("9. Đăng xuất")
+	fmt.Println("10. Thoát")
 
 	prompt := promptui.Prompt{Label: "Nhập lựa chọn"}
 	result, _ := prompt.Run()
@@ -92,10 +93,12 @@ func (app *App) authMenu() {
 	case "7":
 		app.deleteNote()
 	case "8":
+		app.listSharedOut()
+	case "9":
 		app.Client.SetToken("")
 		app.CurrentUser = models.User{}
 		app.PrivKey = nil
-	case "9":
+	case "10":
 		os.Exit(0)
 	default:
 		fmt.Println("Lựa chọn không hợp lệ.")
@@ -537,4 +540,22 @@ func (app *App) deleteNote() {
 	} else {
 		fmt.Println("Lỗi xóa ghi chú:", resp.Status)
 	}
+}
+
+func (app *App) listSharedOut() {
+	notes, err := app.Client.ListSharedOutNotes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("\n--- Danh sách ghi chú đã chia sẻ ---")
+	if len(notes) == 0 {
+		fmt.Println("(Chưa chia sẻ ghi chú nào)")
+	} else {
+		for _, n := range notes {
+			fmt.Printf("[%s] %s (%s) -> TopSharedWith: %s\n", n.NoteID, n.Title, n.Filename, n.SharedWith)
+		}
+	}
+	fmt.Println("-------------------------")
 }

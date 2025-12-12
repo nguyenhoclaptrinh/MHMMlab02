@@ -31,6 +31,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/notes/share", s.HandleShareNote)
 	mux.HandleFunc("/notes/share-link", s.HandleGenerateShareLink)
 	mux.HandleFunc("/public/notes/", s.HandleGetPublicNote)
+	mux.HandleFunc("/notes/shared-out", s.HandleListSharedOut)
 }
 
 func (s *Server) HandleRegister(w http.ResponseWriter, r *http.Request) {
@@ -495,4 +496,49 @@ func (s *Server) HandleDeleteNote(w http.ResponseWriter, r *http.Request) {
 	tx.Commit()
 	w.WriteHeader(http.StatusOK)
 	log.Printf("Ghi chú %s đã được xóa bởi %s", id, user.Username)
+}
+
+func (s *Server) HandleListSharedOut(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Phương thức không được phép", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := s.getUserFromToken(r)
+	if user == nil {
+		http.Error(w, "Không được phép", http.StatusUnauthorized)
+		return
+	}
+
+	// Query: Find notes owned by current user that are shared with OTHERS (sk.user_id != user.ID)
+	// We join shared_keys with notes to get title/filename
+	rows, err := s.DB.Query(`
+		SELECT n.id, n.title, n.filename, sk.user_id 
+		FROM notes n
+		JOIN shared_keys sk ON n.id = sk.note_id
+		WHERE n.owner_id = ? AND sk.user_id != ?
+	`, user.ID, user.ID)
+
+	if err != nil {
+		http.Error(w, "Lỗi truy vấn db", http.StatusInternalServerError)
+		log.Println("List Shared Out Error:", err)
+		return
+	}
+	defer rows.Close()
+
+	var result []models.SharedNoteInfo
+	for rows.Next() {
+		var info models.SharedNoteInfo
+		err := rows.Scan(&info.NoteID, &info.Title, &info.Filename, &info.SharedWith)
+		if err != nil {
+			log.Println("Scan error:", err)
+			continue
+		}
+		result = append(result, info)
+	}
+
+	if result == nil {
+		result = []models.SharedNoteInfo{}
+	}
+	json.NewEncoder(w).Encode(result)
 }
