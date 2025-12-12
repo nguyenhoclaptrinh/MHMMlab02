@@ -137,6 +137,14 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 	note.ID = fmt.Sprintf("%d", time.Now().UnixNano())
 	note.CreatedAt = time.Now()
 
+	// Kiểm tra permission
+	user := s.getUserFromToken(r)
+	if user == nil {
+		http.Error(w, "Không được phép", http.StatusUnauthorized)
+		return
+	}
+	note.OwnerID = user.ID // Enforce owner is the authenticated user
+
 	// Lưu SharedKey cho chủ sở hữu
 	ownerKey, ok := note.SharedKeys[note.OwnerID]
 	if !ok {
