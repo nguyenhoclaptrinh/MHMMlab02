@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bufio"
 	"crypto/ecdh"
 	"encoding/hex"
 	"fmt"
@@ -44,11 +43,11 @@ func (app *App) unauthMenu() {
 	fmt.Println("2. Đăng ký")
 	fmt.Println("3. Tải từ Link")
 	fmt.Println("4. Thoát")
-	fmt.Print("Nhập lựa chọn: ")
 
-	choice := app.readString()
+	prompt := promptui.Prompt{Label: "Nhập lựa chọn"}
+	result, _ := prompt.Run()
 
-	switch choice {
+	switch result {
 	case "1":
 		app.login()
 	case "2":
@@ -73,11 +72,11 @@ func (app *App) authMenu() {
 	fmt.Println("7. Xóa ghi chú")
 	fmt.Println("8. Đăng xuất")
 	fmt.Println("9. Thoát")
-	fmt.Print("Nhập lựa chọn: ")
 
-	choice := app.readString()
+	prompt := promptui.Prompt{Label: "Nhập lựa chọn"}
+	result, _ := prompt.Run()
 
-	switch choice {
+	switch result {
 	case "1":
 		app.createNote()
 	case "2":
@@ -104,10 +103,9 @@ func (app *App) authMenu() {
 }
 
 func (app *App) register() {
-	fmt.Print("Tên đăng nhập: ")
-	username := app.readString()
-
-	prompt := promptui.Prompt{Label: "Mật khẩu", Mask: '*'}
+	prompt := promptui.Prompt{Label: "Tên đăng nhập"}
+	username, _ := prompt.Run()
+	prompt = promptui.Prompt{Label: "Mật khẩu", Mask: '*'}
 	password, _ := prompt.Run()
 
 	fmt.Println("Đang tạo cặp khóa ECDH (Diffie-Hellman)...")
@@ -134,10 +132,9 @@ func (app *App) register() {
 }
 
 func (app *App) login() {
-	fmt.Print("Tên đăng nhập: ")
-	username := app.readString()
-
-	prompt := promptui.Prompt{Label: "Mật khẩu", Mask: '*'}
+	prompt := promptui.Prompt{Label: "Tên đăng nhập"}
+	username, _ := prompt.Run()
+	prompt = promptui.Prompt{Label: "Mật khẩu", Mask: '*'}
 	password, _ := prompt.Run()
 
 	fmt.Println("Đang thử đăng nhập...")
@@ -171,11 +168,11 @@ func (app *App) createNote() {
 		return
 	}
 
-	fmt.Print("Tiêu đề ghi chú: ")
-	title := app.readString()
+	titlePromt := promptui.Prompt{Label: "Tiêu đề ghi chú"}
+	title, _ := titlePromt.Run()
 
-	fmt.Print("Đường dẫn file cần upload: ")
-	filePath := app.readString()
+	filePrompt := promptui.Prompt{Label: "Đường dẫn file cần upload"}
+	filePath, _ := filePrompt.Run()
 
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
@@ -256,8 +253,8 @@ func (app *App) listNotes() {
 }
 
 func (app *App) readNote() {
-	fmt.Print("Note ID: ")
-	id := app.readString()
+	prompt := promptui.Prompt{Label: "Note ID"}
+	id, _ := prompt.Run()
 
 	note, err := app.Client.GetNote(id)
 	if err != nil {
@@ -316,11 +313,11 @@ func (app *App) readNote() {
 		defaultFilename = "downloaded_note.txt"
 	}
 
-	fmt.Printf("Lưu thành file (mặc định: %s): ", defaultFilename)
-	outPath := app.readString()
-	if outPath == "" {
-		outPath = defaultFilename
+	filePrompt := promptui.Prompt{
+		Label:   "Lưu thành file (Enter để dùng tên gốc)",
+		Default: defaultFilename,
 	}
+	outPath, _ := filePrompt.Run()
 
 	if err := os.WriteFile(outPath, plaintext, 0644); err != nil {
 		fmt.Printf("Lỗi lưu file: %v\n", err)
@@ -333,11 +330,11 @@ func (app *App) readNote() {
 }
 
 func (app *App) shareNote() {
-	fmt.Print("Note ID: ")
-	noteID := app.readString()
+	prompt := promptui.Prompt{Label: "Note ID"}
+	noteID, _ := prompt.Run()
 
-	fmt.Print("Tên người nhận: ")
-	targetUser := app.readString()
+	prompt = promptui.Prompt{Label: "Tên người nhận"}
+	targetUser, _ := prompt.Run()
 
 	targetPub, err := app.Client.GetUserPublicKey(targetUser)
 	if err != nil {
@@ -400,8 +397,8 @@ func (app *App) shareNote() {
 }
 
 func (app *App) shareViaUrl() {
-	fmt.Print("Note ID: ")
-	noteID := app.readString()
+	prompt := promptui.Prompt{Label: "Note ID"}
+	noteID, _ := prompt.Run()
 
 	note, err := app.Client.GetNote(noteID)
 	if err != nil {
@@ -439,15 +436,19 @@ func (app *App) shareViaUrl() {
 	}
 
 	// Prompt for limits
-	fmt.Print("Số lượt truy cập tối đa (0 = không giới hạn): ")
-	maxVisitsStr := app.readString()
-	var maxVisits int
-	if maxVisitsStr != "" {
-		fmt.Sscanf(maxVisitsStr, "%d", &maxVisits)
+	promptVisits := promptui.Prompt{
+		Label:   "Số lượt truy cập tối đa (0 = không giới hạn)",
+		Default: "0",
 	}
+	maxVisitsStr, _ := promptVisits.Run()
+	var maxVisits int
+	fmt.Sscanf(maxVisitsStr, "%d", &maxVisits)
 
-	fmt.Print("Thời gian hết hạn (ví dụ 10m, 24h, để trống = vĩnh viễn): ")
-	duration := app.readString()
+	promptDuration := promptui.Prompt{
+		Label:   "Thời gian hết hạn (ví dụ 10m, 24h, để trống = vĩnh viễn)",
+		Default: "",
+	}
+	duration, _ := promptDuration.Run()
 
 	token, err := app.Client.GenerateShareLink(noteID, maxVisits, duration)
 	if err != nil {
@@ -466,8 +467,8 @@ func (app *App) shareViaUrl() {
 }
 
 func (app *App) downloadFromUrl() {
-	fmt.Print("Nhập Link chia sẻ: ")
-	inputLink := app.readString()
+	prompt := promptui.Prompt{Label: "Nhập Link chia sẻ"}
+	inputLink, _ := prompt.Run()
 
 	parts := strings.Split(inputLink, "#")
 	if len(parts) != 2 {
@@ -500,11 +501,11 @@ func (app *App) downloadFromUrl() {
 		defaultFilename = "downloaded_via_link.txt"
 	}
 
-	fmt.Printf("Lưu thành file (mặc định: %s): ", defaultFilename)
-	outPath := app.readString()
-	if outPath == "" {
-		outPath = defaultFilename
+	filePrompt := promptui.Prompt{
+		Label:   "Lưu thành file (Enter để dùng tên gốc)",
+		Default: defaultFilename,
 	}
+	outPath, _ := filePrompt.Run()
 
 	if err := os.WriteFile(outPath, plaintext, 0644); err != nil {
 		fmt.Printf("Lỗi lưu file: %v\n", err)
@@ -517,8 +518,8 @@ func (app *App) downloadFromUrl() {
 }
 
 func (app *App) deleteNote() {
-	fmt.Print("Note ID cần xóa: ")
-	id := app.readString()
+	prompt := promptui.Prompt{Label: "Note ID cần xóa"}
+	id, _ := prompt.Run()
 
 	req, _ := http.NewRequest("DELETE", app.Client.BaseURL+"/notes?id="+id, nil)
 	req.Header.Set("Authorization", "Bearer "+app.Client.Token)
@@ -536,12 +537,4 @@ func (app *App) deleteNote() {
 	} else {
 		fmt.Println("Lỗi xóa ghi chú:", resp.Status)
 	}
-}
-
-func (app *App) readString() string {
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		return strings.TrimSpace(scanner.Text())
-	}
-	return ""
 }
