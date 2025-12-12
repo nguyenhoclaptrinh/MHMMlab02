@@ -2,9 +2,7 @@ package test
 
 import (
 	"bytes"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,20 +12,21 @@ import (
 	"testing"
 	"time"
 
-	"lab02/pkg/models"
-	"lab02/pkg/server/crypto"
+	"lab02/pkg/server/handlers"
 
 	_ "modernc.org/sqlite"
 )
 
 var testDB *sql.DB
+var testDBPath string
 
 // setupTestServer tạo real HTTP test server với router thật
 func setupTestServer() *httptest.Server {
 	var err error
 	// Use file-based DB for better WAL/concurrency support in tests
-	dbFile := "test.db"
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(30000)", dbFile)
+	// Use file-based DB for better WAL/concurrency support in tests
+	testDBPath = fmt.Sprintf("test_%d.db", time.Now().UnixNano())
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(30000)", testDBPath)
 	testDB, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Fatal("Failed to create test database:", err)
@@ -96,6 +95,11 @@ func setupTestServer() *httptest.Server {
 
 	// Tạo HTTP routes
 	mux := http.NewServeMux()
+	// Use real handlers to ensure we test the actual logic
+	server := handlers.NewServer(testDB)
+	server.RegisterRoutes(mux)
+
+	/* Deprecated: Manual test handlers replaced by real handlers
 	mux.HandleFunc("/register", handleRegisterTest)
 	mux.HandleFunc("/login", handleLoginTest)
 	mux.HandleFunc("/notes", handleNotesTest)
@@ -104,6 +108,7 @@ func setupTestServer() *httptest.Server {
 	mux.HandleFunc("/notes/share", handleShareNoteTest)
 	mux.HandleFunc("/notes/share-link", handleGenerateShareLinkTest)
 	mux.HandleFunc("/public/notes/", handleGetPublicNoteTest)
+	*/
 
 	// Tạo httptest.Server với real HTTP listener
 	return httptest.NewServer(mux)
@@ -113,9 +118,9 @@ func setupTestServer() *httptest.Server {
 func cleanupTestData(t *testing.T) {
 	if testDB != nil {
 		testDB.Close()
-		os.Remove("test.db")
-		os.Remove("test.db-shm")
-		os.Remove("test.db-wal")
+		os.Remove(testDBPath)
+		os.Remove(testDBPath + "-shm")
+		os.Remove(testDBPath + "-wal")
 	}
 }
 
@@ -218,423 +223,4 @@ func createTestUserWithRetry(t *testing.T, server *httptest.Server, username, pa
 
 	t.Fatalf("Failed to create user %s after %d attempts: %v", username, maxRetries, lastErr)
 	return ""
-}
-
-// Test handlers - Simplified versions of main.go handlers
-
-func handleRegisterTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Username  string `json:"username"`
-		Password  string `json:"password"`
-		PublicKey []byte `json:"public_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate password strength
-	if len(req.Password) < 8 {
-		http.Error(w, `{"error":"Password must be at least 8 characters"}`, http.StatusBadRequest)
-		return
-	}
-	// Check for uppercase, lowercase, number, special char
-	hasUpper := false
-	hasLower := false
-	hasNumber := false
-	hasSpecial := false
-	for _, c := range req.Password {
-		switch {
-		case c >= 'A' && c <= 'Z':
-			hasUpper = true
-		case c >= 'a' && c <= 'z':
-			hasLower = true
-		case c >= '0' && c <= '9':
-			hasNumber = true
-		case c == '@' || c == '#' || c == '$' || c == '%' || c == '^' || c == '&' || c == '*' || c == '!' || c == '+' || c == '=':
-			hasSpecial = true
-		}
-	}
-	if !hasUpper || !hasLower || !hasNumber || !hasSpecial {
-		http.Error(w, `{"error":"Password must contain uppercase, lowercase, numbers and special characters"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Check if user exists
-	var exists string
-	err := testDB.QueryRow("SELECT username FROM users WHERE username = ?", req.Username).Scan(&exists)
-	if err == nil {
-		http.Error(w, `{"error":"Username already exists"}`, http.StatusConflict)
-		return
-	}
-
-	// Create salt and hash password
-	salt, err := crypto.GenerateSalt()
-	if err != nil {
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-	hashedPwd := crypto.HashPassword(req.Password, salt)
-
-	// Use immediate transaction để tránh database lock
-	tx, err := testDB.Begin()
-	if err != nil {
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	_, err = tx.Exec("INSERT INTO users (username, password_hash, salt, public_key) VALUES (?, ?, ?, ?)",
-		req.Username, hashedPwd, salt, req.PublicKey)
-	if err != nil {
-		tx.Rollback()
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
-}
-
-func handleLoginTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req models.AuthRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
-		return
-	}
-
-	var user models.User
-	var pwdHash string
-	var salt string
-	err := testDB.QueryRow("SELECT username, password_hash, salt, public_key FROM users WHERE username = ?", req.Username).
-		Scan(&user.Username, &pwdHash, &salt, &user.PublicKey)
-
-	if err != nil || pwdHash != crypto.HashPassword(req.Password, salt) {
-		http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
-		return
-	}
-	user.ID = user.Username
-
-	token, err := crypto.GenerateJWT(user.Username)
-	if err != nil {
-		http.Error(w, `{"error":"Failed to generate token"}`, http.StatusInternalServerError)
-		return
-	}
-
-	resp := models.AuthResponse{
-		Token: token,
-		User:  user,
-	}
-	json.NewEncoder(w).Encode(resp)
-}
-
-func handleNotesTest(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		createNoteTest(w, r)
-	case http.MethodGet:
-		listNotesTest(w, r)
-	case http.MethodDelete:
-		deleteNoteTest(w, r)
-	default:
-		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
-	}
-}
-
-func createNoteTest(w http.ResponseWriter, r *http.Request) {
-	// Extract user từ JWT token
-	user := getUserFromTokenTest(r)
-	if user == nil {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	// Parse simple request (chỉ cần content)
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Generate random note ID to avoid collision in stress tests
-	idBytes := make([]byte, 16)
-	rand.Read(idBytes)
-	noteID := hex.EncodeToString(idBytes)
-	createdAt := time.Now()
-
-	// Insert note vào database (with defaults for optional fields)
-	_, err := testDB.Exec(
-		"INSERT INTO notes (id, owner_id, title, filename, content, encrypted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		noteID, user.Username, "", "", req.Content, false, createdAt)
-
-	if err != nil {
-		log.Printf("Error creating note: %v", err) // Log actual error
-		http.Error(w, `{"error":"Failed to create note"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Return response với ID (tests cần field này!)
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       noteID,
-		"content":  req.Content,
-		"owner_id": user.Username,
-	})
-}
-
-func listNotesTest(w http.ResponseWriter, r *http.Request) {
-	user := getUserFromTokenTest(r)
-	if user == nil {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	rows, err := testDB.Query(`
-		SELECT DISTINCT n.id, n.owner_id, n.title, n.filename, n.encrypted 
-		FROM notes n
-		LEFT JOIN shared_keys sk ON n.id = sk.note_id
-		WHERE n.owner_id = ? OR sk.user_id = ?
-	`, user.ID, user.ID)
-
-	if err != nil {
-		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	var result []models.Note
-	for rows.Next() {
-		var n models.Note
-		err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Encrypted)
-		if err != nil {
-			continue
-		}
-		result = append(result, n)
-	}
-
-	json.NewEncoder(w).Encode(result)
-}
-
-func deleteNoteTest(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func handleNoteDetailTest(w http.ResponseWriter, r *http.Request) {
-	user := getUserFromTokenTest(r)
-	if user == nil {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	// Extract note ID từ URL path
-	noteID := r.URL.Path[len("/notes/"):]
-
-	// Get note và check access (owner hoặc shared)
-	var content string
-	var ownerID string
-	err := testDB.QueryRow(`
-		SELECT n.content, n.owner_id FROM notes n
-		LEFT JOIN shared_keys sk ON n.id = sk.note_id
-		WHERE n.id = ? AND (n.owner_id = ? OR sk.user_id = ?)
-	`, noteID, user.Username, user.Username).Scan(&content, &ownerID)
-
-	if err != nil {
-		http.Error(w, `{"error":"Not found"}`, http.StatusNotFound)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       noteID,
-		"content":  content,
-		"owner_id": ownerID,
-	})
-}
-
-func handleGetUserTest(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func handleShareNoteTest(w http.ResponseWriter, r *http.Request) {
-	user := getUserFromTokenTest(r)
-	if user == nil {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	var req struct {
-		NoteID            string `json:"note_id"`
-		RecipientUsername string `json:"recipient_username"`
-		EncryptedKey      string `json:"encrypted_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Verify user owns note
-	var ownerID string
-	err := testDB.QueryRow("SELECT owner_id FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID)
-	if err != nil || ownerID != user.Username {
-		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
-		return
-	}
-
-	// Share note
-	_, err = testDB.Exec(
-		"INSERT INTO shared_keys (note_id, user_id, encrypted_key) VALUES (?, ?, ?)",
-		req.NoteID, req.RecipientUsername, req.EncryptedKey)
-
-	if err != nil {
-		http.Error(w, `{"error":"Failed to share"}`, http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Shared successfully"})
-}
-
-func handleGenerateShareLinkTest(w http.ResponseWriter, r *http.Request) {
-	user := getUserFromTokenTest(r)
-	if user == nil {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	var req struct {
-		NoteID    string `json:"note_id"`
-		Expires   int64  `json:"expires"`
-		MaxVisits int    `json:"max_visits"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
-		return
-	}
-
-	var ownerID string
-	err := testDB.QueryRow("SELECT owner_id FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID)
-	if err != nil {
-		http.Error(w, `{"error":"Note not found"}`, http.StatusNotFound)
-		return
-	}
-
-	if ownerID != user.Username {
-		http.Error(w, `{"error":"Only owner can create share link"}`, http.StatusForbidden)
-		return
-	}
-
-	tokenBytes := make([]byte, 16)
-	rand.Read(tokenBytes)
-	token := hex.EncodeToString(tokenBytes)
-
-	// Create ShareLink record
-	var expiresAt time.Time
-	if req.Expires > 0 {
-		expiresAt = time.Unix(req.Expires, 0)
-	}
-
-	_, err = testDB.Exec(`INSERT INTO share_links (token, note_id, created_at, expires_at, max_visits, visit_count)
-		VALUES (?, ?, ?, ?, ?, 0)`,
-		token, req.NoteID, time.Now(), expiresAt, req.MaxVisits)
-
-	if err != nil {
-		http.Error(w, `{"error":"Failed to create link"}`, http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{
-		"share_token": token,
-		"share_url":   "/public/notes/" + token,
-	})
-}
-
-func handleGetPublicNoteTest(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Path[len("/public/notes/"):]
-
-	var sl models.ShareLink
-	err := testDB.QueryRow(`
-		SELECT token, note_id, created_at, expires_at, max_visits, visit_count 
-		FROM share_links WHERE token = ?`, token).
-		Scan(&sl.Token, &sl.NoteID, &sl.CreatedAt, &sl.ExpiresAt, &sl.MaxVisits, &sl.VisitCount)
-
-	if err == sql.ErrNoRows {
-		http.Error(w, "Link không tồn tại hoặc đã bị hủy", http.StatusNotFound)
-		return
-	}
-
-	// Check Limits
-	expired := false
-	if !sl.ExpiresAt.IsZero() && time.Now().After(sl.ExpiresAt) {
-		expired = true
-	}
-	if sl.MaxVisits > 0 && sl.VisitCount >= sl.MaxVisits {
-		expired = true
-	}
-
-	if expired {
-		// Lazy Delete
-		testDB.Exec("DELETE FROM share_links WHERE token = ?", token)
-		http.Error(w, "Link đã hết hạn hoặc hết lượt truy cập", http.StatusGone) // 410
-		return
-	}
-
-	var n models.Note
-	var title, filename sql.NullString
-	err = testDB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at 
-		FROM notes WHERE id = ?`, sl.NoteID).
-		Scan(&n.ID, &n.OwnerID, &title, &filename, &n.Content, &n.Encrypted, &n.CreatedAt)
-
-	if err != nil {
-		http.Error(w, `{"error":"Note not found"}`, http.StatusNotFound)
-		return
-	}
-
-	// Update Visit Count
-	testDB.Exec("UPDATE share_links SET visit_count = visit_count + 1 WHERE token = ?", token)
-
-	if title.Valid {
-		n.Title = title.String
-	}
-	if filename.Valid {
-		n.Filename = filename.String
-	}
-
-	json.NewEncoder(w).Encode(n)
-}
-
-func getUserFromTokenTest(r *http.Request) *models.User {
-	auth := r.Header.Get("Authorization")
-	if len(auth) < 7 || auth[:7] != "Bearer " {
-		return nil
-	}
-	tokenString := auth[7:]
-
-	username, err := crypto.ValidateJWT(tokenString)
-	if err != nil {
-		return nil
-	}
-
-	var u models.User
-	err = testDB.QueryRow("SELECT username, public_key FROM users WHERE username = ?", username).
-		Scan(&u.Username, &u.PublicKey)
-	if err != nil {
-		return nil
-	}
-	u.ID = u.Username
-	return &u
 }

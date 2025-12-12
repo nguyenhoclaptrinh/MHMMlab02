@@ -2,10 +2,10 @@ package test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -25,7 +25,10 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 
 	// User 1 tạo note
 	notePayload := map[string]interface{}{
-		"content": "Shared secret note",
+		"content": base64.StdEncoding.EncodeToString([]byte("Shared secret note")),
+		"shared_keys": map[string][]byte{
+			"owner": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
@@ -40,15 +43,19 @@ func TestShareNoteWithAnotherUser(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+	}
+
 	var noteResp map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&noteResp)
 	noteID := noteResp["id"].(string)
 
 	// Share note với user 2
 	sharePayload := map[string]interface{}{
-		"note_id":            noteID,
-		"recipient_username": "recipient",
-		"encrypted_key":      "encrypted_shared_key_data",
+		"note_id":       noteID,
+		"target_user":   "recipient",
+		"encrypted_key": []byte("validbase64key=="),
 	}
 	shareBody, _ := json.Marshal(sharePayload)
 
@@ -92,7 +99,10 @@ func TestShareLinkGeneration(t *testing.T) {
 
 	// Tạo note
 	notePayload := map[string]interface{}{
-		"content": "Note with share link",
+		"content": base64.StdEncoding.EncodeToString([]byte("Note with share link")),
+		"shared_keys": map[string][]byte{
+			"linkcreator": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
@@ -113,8 +123,8 @@ func TestShareLinkGeneration(t *testing.T) {
 
 	// Tạo share link
 	linkPayload := map[string]interface{}{
-		"note_id": noteID,
-		"expires": time.Now().Add(24 * time.Hour).Unix(),
+		"note_id":  noteID,
+		"duration": "24h",
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
@@ -134,8 +144,8 @@ func TestShareLinkGeneration(t *testing.T) {
 
 	var linkRespData map[string]interface{}
 	json.NewDecoder(linkResp.Body).Decode(&linkRespData)
-	if linkRespData["share_url"] == nil {
-		t.Error("Expected share_url in response")
+	if linkRespData["share_token"] == nil {
+		t.Error("Expected share_token in response")
 	}
 }
 
@@ -150,7 +160,10 @@ func TestAccessPublicNote(t *testing.T) {
 
 	// Tạo note
 	notePayload := map[string]interface{}{
-		"content": "Public accessible note",
+		"content": base64.StdEncoding.EncodeToString([]byte("Public accessible note")),
+		"shared_keys": map[string][]byte{
+			"publicnoteuser": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
@@ -171,8 +184,8 @@ func TestAccessPublicNote(t *testing.T) {
 
 	// Tạo share link
 	linkPayload := map[string]interface{}{
-		"note_id": noteID,
-		"expires": time.Now().Add(24 * time.Hour).Unix(),
+		"note_id":  noteID,
+		"duration": "24h",
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
@@ -214,7 +227,10 @@ func TestExpiredShareLink(t *testing.T) {
 
 	// Tạo note
 	notePayload := map[string]interface{}{
-		"content": "Expired note",
+		"content": base64.StdEncoding.EncodeToString([]byte("Expired note")),
+		"shared_keys": map[string][]byte{
+			"expireduser": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
@@ -235,8 +251,8 @@ func TestExpiredShareLink(t *testing.T) {
 
 	// Tạo share link đã expired (1 giây trước)
 	linkPayload := map[string]interface{}{
-		"note_id": noteID,
-		"expires": time.Now().Add(-1 * time.Second).Unix(),
+		"note_id":  noteID,
+		"duration": "-1s",
 	}
 	linkBody, _ := json.Marshal(linkPayload)
 
@@ -279,7 +295,10 @@ func TestUnauthorizedNoteAccess(t *testing.T) {
 
 	// User 1 tạo note
 	notePayload := map[string]interface{}{
-		"content": "Private note",
+		"content": base64.StdEncoding.EncodeToString([]byte("Private note")),
+		"shared_keys": map[string][]byte{
+			"user1": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -135,7 +134,10 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	// Generate random note ID instead of time-based to avoid collisions
+	idBytes := make([]byte, 16)
+	rand.Read(idBytes)
+	note.ID = hex.EncodeToString(idBytes)
 	note.CreatedAt = time.Now()
 
 	// Kiểm tra permission

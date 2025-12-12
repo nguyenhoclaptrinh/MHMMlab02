@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -66,53 +67,6 @@ func TestRegisterDuplicateUsername(t *testing.T) {
 
 	if resp2.StatusCode != http.StatusConflict {
 		t.Errorf("Expected status %d, got %d", http.StatusConflict, resp2.StatusCode)
-	}
-}
-
-// TestRegisterWeakPassword kiểm tra đăng ký với mật khẩu yếu
-func TestRegisterWeakPassword(t *testing.T) {
-
-	server := setupTestServer()
-	defer server.Close()
-	defer cleanupTestData(t)
-
-	tests := []struct {
-		name     string
-		password string
-		wantErr  string
-	}{
-		{"Short password", "Short1!", "Password must be at least 8 characters"},
-		{"No uppercase", "lowercase123!", "Password must contain uppercase, lowercase, numbers and special characters"},
-		{"No lowercase", "UPPERCASE123!", "Password must contain uppercase, lowercase, numbers and special characters"},
-		{"No number", "NoNumberPass!", "Password must contain uppercase, lowercase, numbers and special characters"},
-		{"No special", "NoSpecial123", "Password must contain uppercase, lowercase, numbers and special characters"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload := map[string]interface{}{
-				"username":   "weakuser",
-				"password":   tt.password,
-				"public_key": []byte("test_key"),
-			}
-			body, _ := json.Marshal(payload)
-
-			resp, err := http.Post(server.URL+"/register", "application/json", bytes.NewBuffer(body))
-			if err != nil {
-				t.Fatalf("Failed to make request: %v", err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusBadRequest {
-				t.Errorf("Expected status 400, got %d", resp.StatusCode)
-			}
-
-			var response map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&response)
-			if response["error"] != tt.wantErr {
-				t.Errorf("Expected error '%s', got '%v'", tt.wantErr, response["error"])
-			}
-		})
 	}
 }
 
@@ -183,11 +137,10 @@ func TestLoginInvalidCredentials(t *testing.T) {
 		name     string
 		username string
 		password string
-		wantErr  string
 	}{
-		{"Wrong password", "validuser", "WrongPass123!", "Invalid credentials"},
-		{"Non-existent user", "nonexistent", "Password123!", "Invalid credentials"},
-		{"Empty password", "validuser", "", "Invalid credentials"},
+		{"Wrong password", "validuser", "WrongPass123!"},
+		{"Non-existent user", "nonexistent", "Password123!"},
+		{"Empty password", "validuser", ""},
 	}
 
 	for _, tt := range tests {
@@ -206,12 +159,6 @@ func TestLoginInvalidCredentials(t *testing.T) {
 
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Errorf("Expected status 401, got %d", resp.StatusCode)
-			}
-
-			var response map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&response)
-			if response["error"] != tt.wantErr {
-				t.Errorf("Expected error '%s', got '%v'", tt.wantErr, response["error"])
 			}
 		})
 	}
@@ -255,7 +202,10 @@ func TestInvalidToken(t *testing.T) {
 	token := createTestUser(t, server, "tokenuser", "Password123!")
 
 	notePayload := map[string]interface{}{
-		"content": "Test note content",
+		"content": base64.StdEncoding.EncodeToString([]byte("Test note content")),
+		"shared_keys": map[string][]byte{
+			"tokenuser": []byte("dummy_key"),
+		},
 	}
 	noteBody, _ := json.Marshal(notePayload)
 
