@@ -4,12 +4,11 @@ go 1.25.4
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/manifoldco/promptui v0.9.0
+	golang.org/x/term v0.38.0
 	modernc.org/sqlite v1.40.1
 )
 
 require (
-	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
