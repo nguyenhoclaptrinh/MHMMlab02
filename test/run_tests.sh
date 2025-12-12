@@ -64,10 +64,20 @@ else
 fi
 
 echo ""
+echo "👥 Running Multi-User Share Tests..."
+if go test -v ./test/multishare_test.go ./test/test_helpers.go -timeout 30s > /tmp/multishare_test.log 2>&1; then
+    echo -e "${GREEN}✅ Multi-User Share Tests: PASSED${NC}"
+    PASSED=$((PASSED+1))
+else
+    echo -e "${RED}❌ Multi-User Share Tests: FAILED${NC}"
+    FAILED=$((FAILED+1))
+fi
+
+echo ""
 echo "=================================="
 echo "   Test Summary"
 echo "=================================="
-echo -e "${GREEN}Passed: $PASSED / 5 test suites${NC}"
+echo -e "${GREEN}Passed: $PASSED / 6 test suites${NC}"
 if [ $FAILED -gt 0 ]; then
     echo -e "${RED}Failed: $FAILED${NC}"
     echo ""

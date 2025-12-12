@@ -573,7 +573,7 @@ func handleGetPublicNoteTest(w http.ResponseWriter, r *http.Request) {
 		Scan(&sl.Token, &sl.NoteID, &sl.CreatedAt, &sl.ExpiresAt, &sl.MaxVisits, &sl.VisitCount)
 
 	if err == sql.ErrNoRows {
-		http.Error(w, `{"error":"Invalid link"}`, http.StatusNotFound)
+		http.Error(w, "Link không tồn tại hoặc đã bị hủy", http.StatusNotFound)
 		return
 	}
 
@@ -589,7 +589,7 @@ func handleGetPublicNoteTest(w http.ResponseWriter, r *http.Request) {
 	if expired {
 		// Lazy Delete
 		testDB.Exec("DELETE FROM share_links WHERE token = ?", token)
-		http.Error(w, `{"error":"Link gone"}`, http.StatusGone) // 410
+		http.Error(w, "Link đã hết hạn hoặc hết lượt truy cập", http.StatusGone) // 410
 		return
 	}
 
