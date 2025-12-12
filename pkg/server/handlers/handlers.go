@@ -251,11 +251,17 @@ func (s *Server) HandleNoteDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleShareNote(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
+		s.shareNote(w, r)
+	case http.MethodDelete:
+		s.revokeShare(w, r)
+	default:
 		http.Error(w, "Phương thức không được phép", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+func (s *Server) shareNote(w http.ResponseWriter, r *http.Request) {
 	user := s.getUserFromToken(r)
 	if user == nil {
 		http.Error(w, "Không được phép", http.StatusUnauthorized)
@@ -291,6 +297,55 @@ func (s *Server) HandleShareNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Ghi chú %s đã được chia sẻ với %s bởi %s", req.NoteID, req.TargetUser, user.Username)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
+	user := s.getUserFromToken(r)
+	if user == nil {
+		http.Error(w, "Không được phép", http.StatusUnauthorized)
+		return
+	}
+
+	noteID := r.URL.Query().Get("note_id")
+	targetUser := r.URL.Query().Get("target_user")
+
+	if noteID == "" || targetUser == "" {
+		http.Error(w, "Thiếu tham số note_id hoặc target_user", http.StatusBadRequest)
+		return
+	}
+
+	// Verify Owner
+	var ownerID string
+	err := s.DB.QueryRow("SELECT owner_id FROM notes WHERE id = ?", noteID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		http.Error(w, "Không tìm thấy ghi chú", http.StatusNotFound)
+		return
+	}
+	if ownerID != user.ID {
+		http.Error(w, "Chỉ chủ sở hữu mới được thu hồi chia sẻ", http.StatusForbidden)
+		return
+	}
+
+	if targetUser == ownerID {
+		http.Error(w, "Không thể thu hồi quyền của chính mình", http.StatusBadRequest)
+		return
+	}
+
+	// Delete
+	res, err := s.DB.Exec("DELETE FROM shared_keys WHERE note_id = ? AND user_id = ?", noteID, targetUser)
+	if err != nil {
+		http.Error(w, "Lỗi server", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Người dùng này chưa được chia sẻ hoặc không tồn tại", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("Đã thu hồi chia sẻ ghi chú %s với %s bởi %s", noteID, targetUser, user.Username)
 	w.WriteHeader(http.StatusOK)
 }
 

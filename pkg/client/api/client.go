@@ -251,3 +251,21 @@ func (c *Client) ListSharedOutNotes() ([]models.SharedNoteInfo, error) {
 	err = json.NewDecoder(resp.Body).Decode(&notes)
 	return notes, err
 }
+
+func (c *Client) RevokeShare(noteID, targetUser string) error {
+	req, _ := http.NewRequest("DELETE", c.BaseURL+"/notes/share?note_id="+noteID+"&target_user="+targetUser, nil)
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s (Status: %s)", strings.TrimSpace(string(b)), resp.Status)
+	}
+	return nil
+}

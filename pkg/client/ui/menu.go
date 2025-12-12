@@ -62,43 +62,51 @@ func (app *App) unauthMenu() {
 }
 
 func (app *App) authMenu() {
-	fmt.Println("\n--- MENU ---")
-	fmt.Println("1. Tạo ghi chú")
-	fmt.Println("2. Liệt kê ghi chú")
-	fmt.Println("3. Xem ghi chú")
-	fmt.Println("4. Chia sẻ ghi chú")
-	fmt.Println("5. Chia sẻ qua Link")
-	fmt.Println("6. Tải từ Link")
-	fmt.Println("7. Xóa ghi chú")
-	fmt.Println("8. Liệt kê note đã chia sẻ")
-	fmt.Println("9. Đăng xuất")
-	fmt.Println("10. Thoát")
+	fmt.Printf("\n====== MENU CHÍNH (User: %s) ======\n", app.CurrentUser.Username)
+	fmt.Println("\n--- QUẢN LÝ GHI CHÚ ---")
+	fmt.Println("1. Liệt kê ghi chú")
+	fmt.Println("2. Xem nội dung ghi chú")
+	fmt.Println("3. Tạo ghi chú mới")
+	fmt.Println("4. Xóa ghi chú")
+
+	fmt.Println("\n--- CHIA SẺ ---")
+	fmt.Println("5. Chia sẻ với người dùng")
+	fmt.Println("6. Danh sách đang chia sẻ")
+	fmt.Println("7. Thu hồi quyền chia sẻ")
+	fmt.Println("8. Tạo Link chia sẻ")
+	fmt.Println("9. Tải từ Link chia sẻ")
+
+	fmt.Println("\n--- HỆ THỐNG ---")
+	fmt.Println("10. Đăng xuất")
+	fmt.Println("11. Thoát")
 
 	prompt := promptui.Prompt{Label: "Nhập lựa chọn"}
 	result, _ := prompt.Run()
 
 	switch result {
 	case "1":
-		app.createNote()
-	case "2":
 		app.listNotes()
-	case "3":
+	case "2":
 		app.readNote()
+	case "3":
+		app.createNote()
 	case "4":
-		app.shareNote()
-	case "5":
-		app.shareViaUrl()
-	case "6":
-		app.downloadFromUrl()
-	case "7":
 		app.deleteNote()
-	case "8":
+	case "5":
+		app.shareNote()
+	case "6":
 		app.listSharedOut()
+	case "7":
+		app.revokeShare()
+	case "8":
+		app.shareViaUrl()
 	case "9":
+		app.downloadFromUrl()
+	case "10":
 		app.Client.SetToken("")
 		app.CurrentUser = models.User{}
 		app.PrivKey = nil
-	case "10":
+	case "11":
 		os.Exit(0)
 	default:
 		fmt.Println("Lựa chọn không hợp lệ.")
@@ -558,4 +566,19 @@ func (app *App) listSharedOut() {
 		}
 	}
 	fmt.Println("-------------------------")
+}
+
+func (app *App) revokeShare() {
+	prompt := promptui.Prompt{Label: "Note ID"}
+	noteID, _ := prompt.Run()
+
+	prompt = promptui.Prompt{Label: "Tên người cần xóa quyền"}
+	targetUser, _ := prompt.Run()
+
+	err := app.Client.RevokeShare(noteID, targetUser)
+	if err != nil {
+		fmt.Println("Lỗi xóa quyền chia sẻ:", err)
+	} else {
+		fmt.Printf("Đã xóa quyền chia sẻ của %s đối với ghi chú %s thành công!\n", targetUser, noteID)
+	}
 }
