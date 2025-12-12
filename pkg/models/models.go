@@ -22,12 +22,19 @@ type Note struct {
 	Content   []byte    `json:"content"`  // AES-GCM encrypted content
 	Encrypted bool      `json:"encrypted"`
 	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
 
 	// SharedKeys maps UserID to the NoteKey encrypted with that User's Public Key
 	SharedKeys map[string][]byte `json:"shared_keys,omitempty"`
+}
 
-	ShareToken string `json:"share_token,omitempty"`
+// ShareLink represents a public access link for a note
+type ShareLink struct {
+	Token      string    `json:"token"`
+	NoteID     string    `json:"note_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"` // Zero if unlimited
+	MaxVisits  int       `json:"max_visits"` // 0 if unlimited
+	VisitCount int       `json:"visit_count"`
 }
 
 // AuthRequest for login/register

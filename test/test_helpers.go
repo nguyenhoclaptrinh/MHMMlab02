@@ -54,9 +54,7 @@ func setupTestServer() *httptest.Server {
 		filename TEXT,
 		content BLOB,
 		encrypted BOOLEAN,
-		created_at DATETIME,
-		expires_at DATETIME,
-		share_token TEXT
+		created_at DATETIME
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create notes table:", err)
@@ -65,9 +63,6 @@ func setupTestServer() *httptest.Server {
 	// Index cho notes
 	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id);`); err != nil {
 		log.Fatal("Failed to create index idx_notes_owner:", err)
-	}
-	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_share_token ON notes(share_token);`); err != nil {
-		log.Fatal("Failed to create index idx_notes_share_token:", err)
 	}
 
 	// Tạo bảng SharedKeys
@@ -84,6 +79,19 @@ func setupTestServer() *httptest.Server {
 	// Index cho shared_keys
 	if _, err := testDB.Exec(`CREATE INDEX IF NOT EXISTS idx_shared_keys_user ON shared_keys(user_id);`); err != nil {
 		log.Fatal("Failed to create index idx_shared_keys_user:", err)
+	}
+
+	// Tạo bảng ShareLinks
+	_, err = testDB.Exec(`CREATE TABLE IF NOT EXISTS share_links (
+		token TEXT PRIMARY KEY,
+		note_id TEXT,
+		created_at DATETIME,
+		expires_at DATETIME,
+		max_visits INTEGER,
+		visit_count INTEGER
+	)`)
+	if err != nil {
+		log.Fatal("Failed to create share_links table:", err)
 	}
 
 	// Tạo HTTP routes
@@ -398,7 +406,7 @@ func listNotesTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := testDB.Query(`
-		SELECT DISTINCT n.id, n.owner_id, n.title, n.filename, n.encrypted, n.share_token 
+		SELECT DISTINCT n.id, n.owner_id, n.title, n.filename, n.encrypted 
 		FROM notes n
 		LEFT JOIN shared_keys sk ON n.id = sk.note_id
 		WHERE n.owner_id = ? OR sk.user_id = ?
@@ -413,13 +421,9 @@ func listNotesTest(w http.ResponseWriter, r *http.Request) {
 	var result []models.Note
 	for rows.Next() {
 		var n models.Note
-		var token sql.NullString
-		err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Encrypted, &token)
+		err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Encrypted)
 		if err != nil {
 			continue
-		}
-		if token.Valid {
-			n.ShareToken = token.String
 		}
 		result = append(result, n)
 	}
@@ -513,8 +517,9 @@ func handleGenerateShareLinkTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		NoteID  string `json:"note_id"`
-		Expires int64  `json:"expires"`
+		NoteID    string `json:"note_id"`
+		Expires   int64  `json:"expires"`
+		MaxVisits int    `json:"max_visits"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
@@ -522,8 +527,7 @@ func handleGenerateShareLinkTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var ownerID string
-	var currentToken sql.NullString
-	err := testDB.QueryRow("SELECT owner_id, share_token FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID, &currentToken)
+	err := testDB.QueryRow("SELECT owner_id FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID)
 	if err != nil {
 		http.Error(w, `{"error":"Note not found"}`, http.StatusNotFound)
 		return
@@ -534,86 +538,80 @@ func handleGenerateShareLinkTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	finalToken := ""
-	if currentToken.Valid && currentToken.String != "" {
-		finalToken = currentToken.String
-	} else {
-		tokenBytes := make([]byte, 16)
-		rand.Read(tokenBytes)
-		finalToken = hex.EncodeToString(tokenBytes)
+	tokenBytes := make([]byte, 16)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	// Create ShareLink record
+	var expiresAt time.Time
+	if req.Expires > 0 {
+		expiresAt = time.Unix(req.Expires, 0)
 	}
 
-	// Update note with share_token and expires_at
-	var expiresAt *time.Time
-	if req.Expires > 0 {
-		t := time.Unix(req.Expires, 0)
-		expiresAt = &t
-	}
-	_, err = testDB.Exec("UPDATE notes SET share_token = ?, expires_at = ? WHERE id = ?", finalToken, expiresAt, req.NoteID)
+	_, err = testDB.Exec(`INSERT INTO share_links (token, note_id, created_at, expires_at, max_visits, visit_count)
+		VALUES (?, ?, ?, ?, ?, 0)`,
+		token, req.NoteID, time.Now(), expiresAt, req.MaxVisits)
+
 	if err != nil {
-		http.Error(w, `{"error":"Failed to update token"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"Failed to create link"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Return share_url (test expects this field!)
 	json.NewEncoder(w).Encode(map[string]string{
-		"share_token": finalToken,
-		"share_url":   "/public/notes/" + finalToken,
+		"share_token": token,
+		"share_url":   "/public/notes/" + token,
 	})
 }
 
 func handleGetPublicNoteTest(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Path[len("/public/notes/"):]
 
-	var id, ownerID, shareToken string
-	var title, filename sql.NullString // Can be NULL
-	var content []byte
-	var encrypted bool
-	var createdAt time.Time
-	var expiresAtStr sql.NullString
-
-	err := testDB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at, expires_at, share_token 
-		FROM notes WHERE share_token = ?`, token).
-		Scan(&id, &ownerID, &title, &filename, &content, &encrypted, &createdAt, &expiresAtStr, &shareToken)
+	var sl models.ShareLink
+	err := testDB.QueryRow(`
+		SELECT token, note_id, created_at, expires_at, max_visits, visit_count 
+		FROM share_links WHERE token = ?`, token).
+		Scan(&sl.Token, &sl.NoteID, &sl.CreatedAt, &sl.ExpiresAt, &sl.MaxVisits, &sl.VisitCount)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"error":"Invalid link"}`, http.StatusNotFound)
 		return
 	}
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+
+	// Check Limits
+	expired := false
+	if !sl.ExpiresAt.IsZero() && time.Now().After(sl.ExpiresAt) {
+		expired = true
+	}
+	if sl.MaxVisits > 0 && sl.VisitCount >= sl.MaxVisits {
+		expired = true
+	}
+
+	if expired {
+		// Lazy Delete
+		testDB.Exec("DELETE FROM share_links WHERE token = ?", token)
+		http.Error(w, `{"error":"Link gone"}`, http.StatusGone) // 410
 		return
 	}
 
-	// Parse expires_at and check expiration
-	if expiresAtStr.Valid {
-		expiresAt, err := time.Parse(time.RFC3339, expiresAtStr.String)
-		if err == nil && time.Now().After(expiresAt) {
-			http.Error(w, `{"error":"Note expired"}`, http.StatusGone)
-			return
-		}
+	var n models.Note
+	var title, filename sql.NullString
+	err = testDB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at 
+		FROM notes WHERE id = ?`, sl.NoteID).
+		Scan(&n.ID, &n.OwnerID, &title, &filename, &n.Content, &n.Encrypted, &n.CreatedAt)
+
+	if err != nil {
+		http.Error(w, `{"error":"Note not found"}`, http.StatusNotFound)
+		return
 	}
 
-	// Build response
-	n := models.Note{
-		ID:         id,
-		OwnerID:    ownerID,
-		Content:    content,
-		Encrypted:  encrypted,
-		CreatedAt:  createdAt,
-		ShareToken: shareToken,
-	}
+	// Update Visit Count
+	testDB.Exec("UPDATE share_links SET visit_count = visit_count + 1 WHERE token = ?", token)
+
 	if title.Valid {
 		n.Title = title.String
 	}
 	if filename.Valid {
 		n.Filename = filename.String
-	}
-	if expiresAtStr.Valid {
-		if t, err := time.Parse(time.RFC3339, expiresAtStr.String); err == nil {
-			n.ExpiresAt = t
-		}
 	}
 
 	json.NewEncoder(w).Encode(n)

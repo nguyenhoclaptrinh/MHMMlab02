@@ -435,7 +435,22 @@ func (app *App) shareViaUrl() {
 		return
 	}
 
-	token, err := app.Client.GenerateShareLink(noteID)
+	// Prompt for limits
+	promptVisits := promptui.Prompt{
+		Label:   "Số lượt truy cập tối đa (0 = không giới hạn)",
+		Default: "0",
+	}
+	maxVisitsStr, _ := promptVisits.Run()
+	var maxVisits int
+	fmt.Sscanf(maxVisitsStr, "%d", &maxVisits)
+
+	promptDuration := promptui.Prompt{
+		Label:   "Thời gian hết hạn (ví dụ 10m, 24h, để trống = vĩnh viễn)",
+		Default: "",
+	}
+	duration, _ := promptDuration.Run()
+
+	token, err := app.Client.GenerateShareLink(noteID, maxVisits, duration)
 	if err != nil {
 		fmt.Println("Lỗi tạo link:", err)
 		return
@@ -446,6 +461,7 @@ func (app *App) shareViaUrl() {
 
 	fmt.Println("--- LINK CHIA SẺ ---")
 	fmt.Println(fullLink)
+	fmt.Printf("(Giới hạn: %d lượt xem, Thời hạn: %s)\n", maxVisits, duration)
 	fmt.Println("(Gửi link này cho người nhận. Họ có thể tải file mà không cần tài khoản)")
 	fmt.Println("--------------------")
 }

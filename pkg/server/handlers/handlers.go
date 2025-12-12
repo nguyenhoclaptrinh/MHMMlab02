@@ -150,9 +150,9 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = tx.Exec(`INSERT INTO notes (id, owner_id, title, filename, content, encrypted, created_at, expires_at, share_token) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		note.ID, note.OwnerID, note.Title, note.Filename, note.Content, note.Encrypted, note.CreatedAt, note.ExpiresAt, "")
+	_, err = tx.Exec(`INSERT INTO notes (id, owner_id, title, filename, content, encrypted, created_at) 
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		note.ID, note.OwnerID, note.Title, note.Filename, note.Content, note.Encrypted, note.CreatedAt)
 	if err != nil {
 		tx.Rollback()
 		http.Error(w, "Lỗi lưu ghi chú", http.StatusInternalServerError)
@@ -181,7 +181,7 @@ func (s *Server) listNotes(w http.ResponseWriter, r *http.Request) {
 
 	// Lấy ghi chú sở hữu HOẶC được chia sẻ
 	rows, err := s.DB.Query(`
-		SELECT DISTINCT n.id, n.owner_id, n.title, n.filename, n.encrypted, n.share_token 
+		SELECT DISTINCT n.id, n.owner_id, n.title, n.filename, n.encrypted 
 		FROM notes n
 		LEFT JOIN shared_keys sk ON n.id = sk.note_id
 		WHERE n.owner_id = ? OR sk.user_id = ?
@@ -197,14 +197,10 @@ func (s *Server) listNotes(w http.ResponseWriter, r *http.Request) {
 	var result []models.Note
 	for rows.Next() {
 		var n models.Note
-		var token sql.NullString
-		err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Encrypted, &token)
+		err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Encrypted)
 		if err != nil {
 			log.Println("Scan error:", err)
 			continue
-		}
-		if token.Valid {
-			n.ShareToken = token.String
 		}
 		result = append(result, n)
 	}
@@ -221,21 +217,12 @@ func (s *Server) HandleNoteDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var n models.Note
-	var token sql.NullString
-	err := s.DB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at, expires_at, share_token 
+	err := s.DB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at
 		FROM notes WHERE id = ?`, id).
-		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Content, &n.Encrypted, &n.CreatedAt, &n.ExpiresAt, &token)
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Content, &n.Encrypted, &n.CreatedAt)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "Không tìm thấy ghi chú", http.StatusNotFound)
-		return
-	}
-	if token.Valid {
-		n.ShareToken = token.String
-	}
-
-	if !n.ExpiresAt.IsZero() && time.Now().After(n.ExpiresAt) {
-		http.Error(w, "Ghi chú đã hết hạn", http.StatusGone)
 		return
 	}
 
@@ -309,61 +296,100 @@ func (s *Server) HandleGenerateShareLink(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		NoteID string `json:"note_id"`
+		NoteID    string `json:"note_id"`
+		MaxVisits int    `json:"max_visits"`
+		Duration  string `json:"duration"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Yêu cầu không hợp lệ", http.StatusBadRequest)
 		return
 	}
 
+	// Verify ownership
 	var ownerID string
-	var currentToken sql.NullString
-	err := s.DB.QueryRow("SELECT owner_id, share_token FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID, &currentToken)
+	err := s.DB.QueryRow("SELECT owner_id FROM notes WHERE id = ?", req.NoteID).Scan(&ownerID)
 	if err != nil {
 		http.Error(w, "Ghi chú không tồn tại", http.StatusNotFound)
 		return
 	}
-
 	if ownerID != user.ID {
 		http.Error(w, "Chỉ chủ sở hữu mới được tạo link", http.StatusForbidden)
 		return
 	}
 
-	finalToken := ""
-	if currentToken.Valid && currentToken.String != "" {
-		finalToken = currentToken.String
-	} else {
-		tokenBytes := make([]byte, 16)
-		rand.Read(tokenBytes)
-		finalToken = hex.EncodeToString(tokenBytes)
-		_, err := s.DB.Exec("UPDATE notes SET share_token = ? WHERE id = ?", finalToken, req.NoteID)
-		if err != nil {
-			http.Error(w, "Lỗi cập nhật token", http.StatusInternalServerError)
-			return
+	// Create ShareLink
+	tokenBytes := make([]byte, 16)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	var expiresAt time.Time
+	if req.Duration != "" {
+		dur, err := time.ParseDuration(req.Duration)
+		if err == nil {
+			expiresAt = time.Now().Add(dur)
 		}
+	}
+
+	_, err = s.DB.Exec(`INSERT INTO share_links (token, note_id, created_at, expires_at, max_visits, visit_count)
+		VALUES (?, ?, ?, ?, ?, 0)`,
+		token, req.NoteID, time.Now(), expiresAt, req.MaxVisits)
+	if err != nil {
+		http.Error(w, "Lỗi tạo link chia sẻ", http.StatusInternalServerError)
+		log.Println("Create Link Error:", err)
+		return
 	}
 
 	json.NewEncoder(w).Encode(struct {
 		ShareToken string `json:"share_token"`
-	}{ShareToken: finalToken})
+	}{ShareToken: token})
 }
 
 func (s *Server) HandleGetPublicNote(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Path[len("/public/notes/"):]
 
-	var n models.Note
-	err := s.DB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at, expires_at, share_token 
-		FROM notes WHERE share_token = ?`, token).
-		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Content, &n.Encrypted, &n.CreatedAt, &n.ExpiresAt, &n.ShareToken)
+	var sl models.ShareLink
+	err := s.DB.QueryRow(`
+		SELECT token, note_id, created_at, expires_at, max_visits, visit_count 
+		FROM share_links WHERE token = ?`, token).
+		Scan(&sl.Token, &sl.NoteID, &sl.CreatedAt, &sl.ExpiresAt, &sl.MaxVisits, &sl.VisitCount)
 
 	if err == sql.ErrNoRows {
-		http.Error(w, "Link không hợp lệ", http.StatusNotFound)
+		http.Error(w, "Link không tồn tại hoặc đã bị hủy", http.StatusNotFound) // 404 for security/cleanliness
 		return
 	}
 
-	if !n.ExpiresAt.IsZero() && time.Now().After(n.ExpiresAt) {
-		http.Error(w, "Ghi chú đã hết hạn", http.StatusGone)
+	// Check Limits
+	expired := false
+	if !sl.ExpiresAt.IsZero() && time.Now().After(sl.ExpiresAt) {
+		expired = true
+	}
+	if sl.MaxVisits > 0 && sl.VisitCount >= sl.MaxVisits {
+		expired = true
+	}
+
+	if expired {
+		// Lazy Delete
+		s.DB.Exec("DELETE FROM share_links WHERE token = ?", token)
+		http.Error(w, "Link đã hết hạn hoặc hết lượt truy cập", http.StatusGone) // 410
 		return
+	}
+
+	// Get Note Content
+	var n models.Note
+	err = s.DB.QueryRow(`SELECT id, owner_id, title, filename, content, encrypted, created_at 
+		FROM notes WHERE id = ?`, sl.NoteID).
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Filename, &n.Content, &n.Encrypted, &n.CreatedAt)
+
+	if err != nil {
+		http.Error(w, "Không tìm thấy ghi chú gốc", http.StatusNotFound)
+		return
+	}
+
+	// Update Visit Count
+	_, err = s.DB.Exec("UPDATE share_links SET visit_count = visit_count + 1 WHERE token = ?", token)
+	if err != nil {
+		log.Println("Update visit count failed:", err)
+		// Non-critical error, continue to serve note
 	}
 
 	json.NewEncoder(w).Encode(n)

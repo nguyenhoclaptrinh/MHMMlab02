@@ -46,9 +46,7 @@ func InitDB(dbPath string) (*sql.DB, error) { // Changed dbFile to dbPath
 		filename TEXT,
 		content BLOB,
 		encrypted BOOLEAN,
-		created_at DATETIME,
-		expires_at DATETIME,
-		share_token TEXT
+		created_at DATETIME
 	)`)
 	if err != nil {
 		return nil, err
@@ -56,9 +54,6 @@ func InitDB(dbPath string) (*sql.DB, error) { // Changed dbFile to dbPath
 
 	// Index cho notes
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_owner ON notes(owner_id);`); err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_share_token ON notes(share_token);`); err != nil {
 		return nil, err
 	}
 
@@ -75,6 +70,26 @@ func InitDB(dbPath string) (*sql.DB, error) { // Changed dbFile to dbPath
 
 	// Index cho shared_keys
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_shared_keys_user ON shared_keys(user_id);`); err != nil {
+		return nil, err
+	}
+
+	// Tạo bảng ShareLinks
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS share_links (
+		token TEXT PRIMARY KEY,
+		note_id TEXT,
+		created_at DATETIME,
+		expires_at DATETIME,
+		max_visits INTEGER,
+		visit_count INTEGER
+	)`)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_share_links_token ON share_links(token);`); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_share_links_note ON share_links(note_id);`); err != nil {
 		return nil, err
 	}
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"lab02/pkg/models"
@@ -179,10 +180,16 @@ func (c *Client) ShareNote(noteID, targetUser string, encryptedKey []byte) error
 	return nil
 }
 
-func (c *Client) GenerateShareLink(noteID string) (string, error) {
+func (c *Client) GenerateShareLink(noteID string, maxVisits int, duration string) (string, error) {
 	reqLink := struct {
-		NoteID string `json:"note_id"`
-	}{NoteID: noteID}
+		NoteID    string `json:"note_id"`
+		MaxVisits int    `json:"max_visits"`
+		Duration  string `json:"duration"`
+	}{
+		NoteID:    noteID,
+		MaxVisits: maxVisits,
+		Duration:  duration,
+	}
 	body, _ := json.Marshal(reqLink)
 
 	r, _ := http.NewRequest("POST", c.BaseURL+"/notes/share-link", bytes.NewBuffer(body))
@@ -216,7 +223,8 @@ func (c *Client) GetPublicNote(url string) (*models.Note, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status: %s", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s (Status: %s)", strings.TrimSpace(string(body)), resp.Status)
 	}
 
 	var note models.Note
